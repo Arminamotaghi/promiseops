@@ -1,0 +1,28 @@
+{
+  "additionalProperties": false,
+  "properties": {
+    "order_id": {
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$",
+      "title": "Order Id",
+      "type": "string"
+    },
+    "request_id": {
+      "anyOf": [
+        {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Request Id"
+    }
+  },
+  "required": [
+    "order_id"
+  ],
+  "title": "PredictionRequest",
+  "type": "object"
+}

@@ -1,0 +1,35 @@
+[project]
+name = "promiseops-student"
+version = "0.1.0"
+description = "PromiseOps student implementation"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+  "fastapi==0.162.0", "uvicorn==0.54.0", "pandas==3.0.5",
+  "scikit-learn==1.9.0", "sqlalchemy>=2.0.40,<2.1", "psycopg[binary]==3.3.4",
+  "prometheus-client==0.26.0", "pyyaml>=6.0.2,<7", "joblib>=1.4,<2",
+]
+
+[project.optional-dependencies]
+dev = ["pytest==9.1.1", "httpx==0.28.1", "jinja2>=3.1.6,<4", "ruff>=0.12,<1", "hatchling>=1.32,<2"]
+
+[project.scripts]
+promiseops = "promiseops.cli:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra"
+
+[tool.ruff]
+line-length = 110
+target-version = "py312"
+
+[tool.uv]
+environments = ["sys_platform == 'linux'"]
+
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/promiseops"]

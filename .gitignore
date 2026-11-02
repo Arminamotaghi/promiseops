@@ -1,0 +1,10 @@
+.venv/
+__pycache__/
+*.pyc
+.env
+*.key
+*.kubeconfig
+data/
+artifacts/
+wheelhouse/
+.pytest_cache/

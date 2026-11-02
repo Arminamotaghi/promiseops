@@ -1,0 +1,17 @@
+[
+  "item_count",
+  "seller_count",
+  "total_price",
+  "total_freight",
+  "total_weight_g",
+  "payment_total",
+  "max_installments",
+  "promise_days",
+  "approval_hour",
+  "approval_weekday",
+  "interstate_fraction",
+  "customer_state",
+  "primary_seller_state",
+  "primary_category",
+  "primary_payment_type"
+]

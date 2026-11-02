@@ -1,0 +1,31 @@
+{
+  "additionalProperties": false,
+  "properties": {
+    "order_id": {
+      "title": "Order Id",
+      "type": "string"
+    },
+    "request_id": {
+      "title": "Request Id",
+      "type": "string"
+    },
+    "risk_probability": {
+      "maximum": 1,
+      "minimum": 0,
+      "title": "Risk Probability",
+      "type": "number"
+    },
+    "model_version": {
+      "title": "Model Version",
+      "type": "string"
+    }
+  },
+  "required": [
+    "order_id",
+    "request_id",
+    "risk_probability",
+    "model_version"
+  ],
+  "title": "PredictionResponse",
+  "type": "object"
+}

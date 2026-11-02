@@ -1,93 +1,53 @@
-# promiseops
+# PromiseOps: مسئولیت یک سرویس واقعی را تحویل بگیرید
 
+شما تیم MLOps شرکت «PromiseOps» هستید؛ یک بازار آنلاین که سفارش‌های چند فروشنده را به مشتری‌ها می‌رساند. تیم عملیات هر روز فقط می‌تواند حدود ۱۰ درصد سفارش‌ها را پیگیری کند. تماس با فروشنده، بررسی مسیر ارسال و خبر دادن به مشتری هزینه دارد. وظیفهٔ شما این است که هنگام تأیید سفارش، احتمال دیر رسیدن آن را برآورد کنید و این قابلیت را به یک سرویس قابل اتکا تبدیل کنید.
 
+خروجی پروژه فقط فایل مدل یا نوت‌بوک نیست. تیم بعدی باید بتواند دادهٔ جدید را وارد کند، مدل را بازتولید کند، سرویس را منتشر کند، خطا را تشخیص دهد و در صورت نیاز به نسخهٔ سالم برگردد. روز آخر باید نشان بدهید این چرخه واقعاً کار می‌کند.
 
-## Getting started
+## شرایط کار
 
-To make it easy for you to get started with GitLab, here's a list of recommended next steps.
+پروژه ۱۰ روز است. انتظار کار روزانهٔ هر نفر ۴ تا ۶ ساعت است. هفت گروه مسئلهٔ یکسان دارند و هر گروه محیط خصوصی خودش را دریافت می‌کند: مخزن و Registry در GitLab، پایگاه داده، Airflow، MLflow، Grafana و namespaceهای Kubernetes. نصب و مدیریت این سرویس‌های پایه با تیم آموزشی است. پیاده‌سازی pipeline، مدل، DAG، API، image، chart، CI و پایش با شماست.
 
-Already a pro? Just edit this README.md and make it your own. Want to make it easy? [Use the template at the bottom](#editing-this-readme)!
+دسترسی شما به namespaceهای گروه خودتان محدود است. SSH سرور، دسترسی مدیر کلاستر و تغییر NetworkPolicy یا سهمیه‌ها لازم نیست. برای مشکل زیرساخت تیکت بدهید؛ برای تغییر کد و عملیات گروه خودتان Merge Request بسازید. کارهای آموزش سنگین در صف اجرا می‌شوند و ممکن است منتظر بمانند. زمان انتظار صف را با زمان اجرای مدل اشتباه نگیرید.
 
-## Add your files
+## تصمیم کسب‌وکار و دامنهٔ داده
 
-* [Create](https://docs.gitlab.com/user/project/repository/web_editor/#create-a-file) or [upload](https://docs.gitlab.com/user/project/repository/web_editor/#upload-a-file) files
-* [Add files using the command line](https://docs.gitlab.com/topics/git/add_files/#add-files-to-a-git-repository) or push an existing Git repository with the following command:
+برای هر سفارش، در لحظهٔ تأیید آن، احتمال دیر رسیدن را محاسبه می‌کنید. دیرکرد یعنی **تاریخ محلی تحویل به مشتری، بعد از تاریخ وعدهٔ تحویل باشد**؛ منطقهٔ زمانی `America/Sao_Paulo` است. مقایسهٔ ساعت‌ها در یک روز، برچسب دیرکرد نمی‌سازد.
 
-```
-cd existing_repo
-git remote add origin https://gitlab.mlops.qbootcamp.ir/qbc13/g07/promiseops.git
-git branch -M main
-git push -uf origin main
-```
+دامنهٔ ارزیابی این نسخه، سفارش‌های تکمیل‌شده با تاریخ‌های معتبر است. این مدل خطر لغو سفارش را پوشش نمی‌دهد و ادعای پوشش همهٔ سفارش‌های واقعی بازار را نباید داشته باشید. وضعیت نهایی سفارش فقط برای ساخت cohort توسط تیم آموزشی استفاده می‌شود و جزو ورودی مدل نیست.
 
-## Integrate with your tools
+داده‌ها از Olist می‌آیند. شرکت آن‌ها را به شکل batchهای تاریخی مرتب‌شده منتشر می‌کند. زمان شرکت سریع‌تر از زمان واقعی جلو می‌رود. اطلاعات سفارش و نتیجهٔ تحویل دو انتشار جدا دارند. تأخیر هفت‌روزهٔ گزارش نتیجه، بخشی مصنوعی و اعلام‌شده از سناریو است. ممکن است دادهٔ سفارش جدید داشته باشید ولی هنوز اجازهٔ استفاده از برچسب آن را نداشته باشید.
 
-* [Set up project integrations](https://gitlab.mlops.qbootcamp.ir/qbc13/g07/promiseops/-/settings/integrations)
+فایل‌های منبع، شناسه‌ها و کلیدهای رابطه‌ای دارند. ابتدا آن‌ها را در PostgreSQL وارد کنید. سفارش می‌تواند چند قلم کالا و چند ردیف پرداخت داشته باشد؛ join ساده‌ای که مبلغ سفارش را چند برابر کند پذیرفته نیست. batch خراب باید کامل رد و قرنطینه شود. اجرای دوبارهٔ همان batch، تعداد ردیف‌ها را تغییر نمی‌دهد. شناسهٔ یکسان با محتوای متفاوت خطاست.
 
-## Collaborate with your team
+## چیزهایی که باید بسازید
 
-* [Invite team members and collaborators](https://docs.gitlab.com/user/project/members/)
-* [Create a new merge request](https://docs.gitlab.com/user/project/merge_requests/creating_merge_requests/)
-* [Automatically close issues from merge requests](https://docs.gitlab.com/user/project/issues/managing_issues/#closing-issues-automatically)
-* [Enable merge request approvals](https://docs.gitlab.com/user/project/merge_requests/approvals/)
-* [Set auto-merge](https://docs.gitlab.com/user/project/merge_requests/auto_merge/)
+۱. **مسیر داده:** دریافت feed منتشرشده، کنترل checksum و schema، بررسی کلیدها و کیفیت، تراکنش کامل، ثبت receipt و اجرای دوبارهٔ امن. برای هر تصمیم زمانی توضیح بدهید چه چیزی در آن لحظه معلوم بوده است.
 
-## Test and Deploy
+۲. **مدل قابل دفاع:** حداقل دو رویکرد معنادار، baseline ساده، feature engineering بدون نشت اطلاعات و تقسیم زمانی. نتیجهٔ تحویل، زمان واقعی ارسال یا تحویل، review و وضعیت نهایی نباید predictor باشند. برچسب‌های train باید تا cutoff آموزش در دسترس شده باشند؛ قدیمی بودن خود سفارش کافی نیست. پیش‌پردازش باید همراه مدل ذخیره شود و مسیر feature در train و serving مشترک باشد.
 
-Use the built-in continuous integration in GitLab.
+۳. **چرخهٔ مدل:** DAGهای Airflow برای ingestion و آموزش، ثبت experiment و artifact در MLflow و شناسنامهٔ قابل بازتولید مدل. schema، نسخهٔ کد، داده، cutoffها، معیارها و محیط اجرا باید مشخص باشند. آموزش در Job محدود و صف‌دار انجام می‌شود. scheduler را با fit سنگین اشغال نکنید.
 
-* [Get started with GitLab CI/CD](https://docs.gitlab.com/ci/quick_start/)
-* [Analyze your code for known vulnerabilities with Static Application Security Testing (SAST)](https://docs.gitlab.com/user/application_security/sast/)
-* [Deploy to Kubernetes, Amazon EC2, or Amazon ECS using Auto Deploy](https://docs.gitlab.com/topics/autodevops/requirements/)
-* [Use pull-based deployments for improved Kubernetes management](https://docs.gitlab.com/user/clusters/agent/)
-* [Set up protected environments](https://docs.gitlab.com/ci/environments/protected_environments/)
+۴. **سرویس و خروجی عملیات:** قرارداد `POST /predict`، health و readiness جدا، خطای روشن برای سفارش ناموجود و ورودی نامعتبر، authentication و request ID. یک اجرای batch، فهرست اولویت‌دار ۱۰ درصد سفارش‌های cohort مشخص را تحویل بدهد. تعداد و cohort را در خروجی بنویسید تا فهرست قابل بررسی باشد.
 
-***
+۵. **انتشار واقعی:** Docker image بازتولیدپذیر، تست‌های لازم، Helm chart، Service، probeها، منابع مشخص، دو replica در production و HPA با سقف سه replica. یک CronJob برای امتیازدهی دوره‌ای بسازید. Airflow مسئول گردش داده و مدل است؛ CronJob باید کار مشخص و مستقلی داشته باشد. ingress و سیاست‌های امنیتی را تیم آموزشی آماده می‌کند.
 
-# Editing this README
+۶. **CI و تغییر نسخه:** هر تغییر از pipeline تست عبور کند، image با digest مشخص ساخته شود، ابتدا staging بررسی شود و انتشار production تأیید دستی عضو مسئول گروه را بخواهد. مدل جدید باید روی همان cohort با champion مقایسه شود. رد شدن مدل ضعیف‌تر نتیجهٔ درست است. تغییر alias در MLflow نباید سرویس در حال اجرا را بی‌صدا عوض کند.
 
-When you're ready to make this README your own, just edit this file and use the handy template below (or feel free to structure it however you want - this is just a starting point!). Thanks to [makeareadme.com](https://www.makeareadme.com/) for this template.
+۷. **پایش و بازآموزی:** نرخ درخواست، latency، خطا، readiness و نسخهٔ مدل؛ drift داده و کیفیت مدل با برچسب‌های واقعاً رسیده. تأخیر برچسب را در طراحی پنجرهٔ ارزیابی لحاظ کنید. علت پیشنهاد retraining را ثبت کنید. با هر نوسان کوچک آموزش تازه راه نیندازید. آموزش و ارزیابی می‌توانند خودکار باشند؛ انتشار production تأیید انسانی دارد.
 
-## Suggestions for a good README
+۸. **تحویل عملیات:** راه‌اندازی از ابتدا، rollback، توضیح وابستگی‌ها، محدودیت‌ها و گزارش رخداد. عضو دیگری از گروه باید بتواند با مستند شما نسخهٔ مشخصی را اجرا کند. secret، token و اطلاعات ورود نباید وارد Git، artifact عمومی، screenshot یا log شوند.
 
-Every project is different, so consider which of these sections apply to yours. The sections used in the template are suggestions for most open source projects. Also keep in mind that while a README can be too long and detailed, too long is better than too short. If you think your README is too long, consider utilizing another form of documentation rather than cutting out information.
+## معیار موفقیت
 
-## Name
-Choose a self-explaining name for your project.
+معیار اصلی `recall@10%` است: از تمام سفارش‌های دیررس cohort، چه سهمی در فهرست ۱۰ درصدی پیگیری قرار گرفته‌اند؟ `precision@10%`، PR-AUC و Brier را هم گزارش کنید. روش tie-breaking، اندازهٔ cohort و فراوانی کلاس مثبت را بنویسید. accuracy به‌تنهایی معیار مناسبی برای این تصمیم نیست.
 
-## Description
-Let people know what your project can do specifically. Provide context and add a link to any reference visitors might be unfamiliar with. A list of Features or a Background subsection can also be added here. If there are alternatives to your project, this is a good place to list differentiating factors.
+در آزمون عمومی، هر گروه باید ۳ دقیقه با نرخ ۱۰ درخواست در ثانیه کار کند؛ p95 حداکثر ۵۰۰ میلی‌ثانیه و خطای سمت سرور کمتر از ۱ درصد باشد. این آزمون با image و دادهٔ ثابت، پس از warm-up و در زمان اعلام‌شده انجام می‌شود. نمایش HPA آزمون جداگانه دارد و باید افزایش replica و برگشت آن را با شواهد نشان بدهید.
 
-## Badges
-On some READMEs, you may see small images that convey metadata, such as whether or not all the tests are passing for the project. You can use Shields to add some to your README. Many services also have instructions for adding a badge.
+## همکاری تیمی و تحویل روز آخر
 
-## Visuals
-Depending on what you are making, it can be a good idea to include screenshots or even a video (you'll frequently see GIFs rather than actual videos). Tools like ttygif can help, but check out Asciinema for a more sophisticated method.
+روز اول نقش‌ها و interfaceها را مشخص کنید: داده و قراردادها، مدل و ارزیابی، orchestration و lifecycle، سرویس و انتشار، پایش و عملیات. نقش‌ها می‌توانند بین نفرات ترکیب شوند؛ همه نباید منتظر تمام شدن نوت‌بوک مدل بمانند. API می‌تواند از روز اول با یک مدل ساده و قرارداد ثابت آماده شود.
 
-## Installation
-Within a particular ecosystem, there may be a common way of installing things, such as using Yarn, NuGet, or Homebrew. However, consider the possibility that whoever is reading your README is a novice and would like more guidance. Listing specific steps helps remove ambiguity and gets people to using your project as quickly as possible. If it only runs in a specific context like a particular programming language version or operating system or has dependencies that have to be installed manually, also add a Requirements subsection.
+مخزن باید کد، تست‌ها، DAGها، chart، pipeline، راهنمای اجرا، گزارش مدل و runbook داشته باشد. دادهٔ خام، secret و image را در Git نگذارید. هر نفر باید commit و review معنادار داشته باشد و بتواند بخشی از سیستم و یک تصمیم خارج از بخش خودش را توضیح بدهد.
 
-## Usage
-Use examples liberally, and show the expected output if you can. It's helpful to have inline the smallest example of usage that you can demonstrate, while providing links to more sophisticated examples if they are too long to reasonably include in the README.
-
-## Support
-Tell people where they can go to for help. It can be any combination of an issue tracker, a chat room, an email address, etc.
-
-## Roadmap
-If you have ideas for releases in the future, it is a good idea to list them in the README.
-
-## Contributing
-State if you are open to contributions and what your requirements are for accepting them.
-
-For people who want to make changes to your project, it's helpful to have some documentation on how to get started. Perhaps there is a script that they should run or some environment variables that they need to set. Make these steps explicit. These instructions could also be useful to your future self.
-
-You can also document commands to lint the code or run tests. These steps help to ensure high code quality and reduce the likelihood that the changes inadvertently break something. Having instructions for running tests is especially helpful if it requires external setup, such as starting a Selenium server for testing in a browser.
-
-## Authors and acknowledgment
-Show your appreciation to those who have contributed to the project.
-
-## License
-For open source projects, say how it is licensed.
-
-## Project status
-If you have run out of energy or time for your project, put a note at the top of the README saying that development has slowed down or stopped completely. Someone may choose to fork your project or volunteer to step in as a maintainer or owner, allowing your project to keep going. You can also make an explicit request for maintainers.
+۸۰ درصد نمرهٔ نهایی از خروجی گروه و ۲۰ درصد از مشارکت و دفاع فردی است. دسته‌های رخداد و بازهٔ تمرین از قبل اعلام می‌شوند؛ نمونهٔ دقیق خرابی ممکن است تازه باشد. frontend، Kafka، نصب کلاستر و آموزش توزیع‌شده جزو نیازمندی‌های این پروژه نیستند.

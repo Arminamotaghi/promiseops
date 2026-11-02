@@ -1,0 +1,307 @@
+{
+  "$defs": {
+    "Customer": {
+      "additionalProperties": false,
+      "properties": {
+        "customer_id": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$",
+          "title": "Customer Id",
+          "type": "string"
+        },
+        "customer_state": {
+          "pattern": "^[A-Z]{2}$",
+          "title": "Customer State",
+          "type": "string"
+        }
+      },
+      "required": [
+        "customer_id",
+        "customer_state"
+      ],
+      "title": "Customer",
+      "type": "object"
+    },
+    "Item": {
+      "additionalProperties": false,
+      "properties": {
+        "order_id": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$",
+          "title": "Order Id",
+          "type": "string"
+        },
+        "item_id": {
+          "minimum": 1,
+          "title": "Item Id",
+          "type": "integer"
+        },
+        "product_id": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$",
+          "title": "Product Id",
+          "type": "string"
+        },
+        "seller_id": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$",
+          "title": "Seller Id",
+          "type": "string"
+        },
+        "price": {
+          "maximum": 10000000,
+          "minimum": 0,
+          "title": "Price",
+          "type": "number"
+        },
+        "freight": {
+          "maximum": 10000000,
+          "minimum": 0,
+          "title": "Freight",
+          "type": "number"
+        }
+      },
+      "required": [
+        "order_id",
+        "item_id",
+        "product_id",
+        "seller_id",
+        "price",
+        "freight"
+      ],
+      "title": "Item",
+      "type": "object"
+    },
+    "Order": {
+      "additionalProperties": false,
+      "properties": {
+        "order_id": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$",
+          "title": "Order Id",
+          "type": "string"
+        },
+        "customer_id": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$",
+          "title": "Customer Id",
+          "type": "string"
+        },
+        "approved_at": {
+          "format": "date-time",
+          "title": "Approved At",
+          "type": "string"
+        },
+        "promised_date": {
+          "format": "date",
+          "title": "Promised Date",
+          "type": "string"
+        }
+      },
+      "required": [
+        "order_id",
+        "customer_id",
+        "approved_at",
+        "promised_date"
+      ],
+      "title": "Order",
+      "type": "object"
+    },
+    "Outcome": {
+      "additionalProperties": false,
+      "properties": {
+        "order_id": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$",
+          "title": "Order Id",
+          "type": "string"
+        },
+        "delivered_at": {
+          "format": "date-time",
+          "title": "Delivered At",
+          "type": "string"
+        },
+        "available_at": {
+          "format": "date-time",
+          "title": "Available At",
+          "type": "string"
+        }
+      },
+      "required": [
+        "order_id",
+        "delivered_at",
+        "available_at"
+      ],
+      "title": "Outcome",
+      "type": "object"
+    },
+    "Payment": {
+      "additionalProperties": false,
+      "properties": {
+        "order_id": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$",
+          "title": "Order Id",
+          "type": "string"
+        },
+        "sequence": {
+          "minimum": 1,
+          "title": "Sequence",
+          "type": "integer"
+        },
+        "payment_type": {
+          "maxLength": 40,
+          "minLength": 1,
+          "title": "Payment Type",
+          "type": "string"
+        },
+        "installments": {
+          "maximum": 100,
+          "minimum": 0,
+          "title": "Installments",
+          "type": "integer"
+        },
+        "value": {
+          "maximum": 10000000,
+          "minimum": 0,
+          "title": "Value",
+          "type": "number"
+        }
+      },
+      "required": [
+        "order_id",
+        "sequence",
+        "payment_type",
+        "installments",
+        "value"
+      ],
+      "title": "Payment",
+      "type": "object"
+    },
+    "Product": {
+      "additionalProperties": false,
+      "properties": {
+        "product_id": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$",
+          "title": "Product Id",
+          "type": "string"
+        },
+        "category": {
+          "maxLength": 100,
+          "minLength": 1,
+          "title": "Category",
+          "type": "string"
+        },
+        "weight_g": {
+          "maximum": 1000000,
+          "minimum": 0,
+          "title": "Weight G",
+          "type": "number"
+        }
+      },
+      "required": [
+        "product_id",
+        "category",
+        "weight_g"
+      ],
+      "title": "Product",
+      "type": "object"
+    },
+    "Seller": {
+      "additionalProperties": false,
+      "properties": {
+        "seller_id": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$",
+          "title": "Seller Id",
+          "type": "string"
+        },
+        "seller_state": {
+          "pattern": "^[A-Z]{2}$",
+          "title": "Seller State",
+          "type": "string"
+        }
+      },
+      "required": [
+        "seller_id",
+        "seller_state"
+      ],
+      "title": "Seller",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "const": "1.0",
+      "default": "1.0",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "batch_id": {
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$",
+      "title": "Batch Id",
+      "type": "string"
+    },
+    "available_at": {
+      "format": "date-time",
+      "title": "Available At",
+      "type": "string"
+    },
+    "kind": {
+      "enum": [
+        "orders",
+        "outcomes"
+      ],
+      "title": "Kind",
+      "type": "string"
+    },
+    "customers": {
+      "items": {
+        "$ref": "#/$defs/Customer"
+      },
+      "title": "Customers",
+      "type": "array"
+    },
+    "sellers": {
+      "items": {
+        "$ref": "#/$defs/Seller"
+      },
+      "title": "Sellers",
+      "type": "array"
+    },
+    "products": {
+      "items": {
+        "$ref": "#/$defs/Product"
+      },
+      "title": "Products",
+      "type": "array"
+    },
+    "orders": {
+      "items": {
+        "$ref": "#/$defs/Order"
+      },
+      "title": "Orders",
+      "type": "array"
+    },
+    "items": {
+      "items": {
+        "$ref": "#/$defs/Item"
+      },
+      "title": "Items",
+      "type": "array"
+    },
+    "payments": {
+      "items": {
+        "$ref": "#/$defs/Payment"
+      },
+      "title": "Payments",
+      "type": "array"
+    },
+    "outcomes": {
+      "items": {
+        "$ref": "#/$defs/Outcome"
+      },
+      "title": "Outcomes",
+      "type": "array"
+    }
+  },
+  "required": [
+    "batch_id",
+    "available_at",
+    "kind"
+  ],
+  "title": "Batch",
+  "type": "object"
+}

@@ -1,0 +1,48 @@
+stages: [test, build, inspect]
+variables:
+  UV_OFFLINE: "1"
+  UV_PYTHON_DOWNLOADS: never
+  PIP_NO_INDEX: "1"
+  PIP_DISABLE_PIP_VERSION_CHECK: "1"
+  UV_LINK_MODE: copy
+  HOME: /tmp/home
+  UV_CACHE_DIR: /tmp/uv-cache
+  FF_USE_ADVANCED_POD_SPEC_CONFIGURATION: "true"
+default:
+  image: $CI_TOOLBOX_IMAGE
+  tags: [promiseops]
+  before_script:
+    - mkdir -p "$HOME"
+contracts:
+  stage: test
+  script:
+    - cp -a /opt/promiseops/wheelhouse ./wheelhouse
+    - uv venv --python /usr/local/bin/python .venv
+    - uv pip sync --python .venv/bin/python --no-index --find-links wheelhouse --require-hashes requirements.lock
+    - uv pip install --python .venv/bin/python --no-index --no-deps --no-build-isolation .
+    - .venv/bin/python -m pytest -q
+build-own-image:
+  stage: build
+  resource_group: image-build
+  rules:
+    - if: '$CI_COMMIT_REF_PROTECTED == "true"'
+  script:
+    - cp -a /opt/promiseops/wheelhouse ./wheelhouse
+    - mkdir -p "$HOME/.docker"
+    - python ci/registry_login.py
+    - buildctl --addr "$BUILDKIT_ADDR" --tlsservername "$BUILDKIT_SERVER_NAME" --tlscacert "$BUILDKIT_CA" --tlscert "$BUILDKIT_CERT" --tlskey "$BUILDKIT_KEY" build --frontend dockerfile.v0 --local context=. --local dockerfile=. --opt build-arg:BASE_IMAGE="$BASE_IMAGE" --opt build-arg:UV_IMAGE="$UV_IMAGE" --output type=image,name="$CI_REGISTRY_IMAGE/app:$CI_COMMIT_SHA",push=true --metadata-file build.json
+    - kubectl get deployments -n "$TEAM-prod" -o name
+    - python -c 'import json; assert json.load(open("build.json"))["containerimage.digest"].startswith("sha256:")'
+  artifacts:
+    paths: [build.json]
+inspect-own-namespaces:
+  stage: inspect
+  rules:
+    - if: '$CI_COMMIT_REF_PROTECTED == "true"'
+      when: manual
+  allow_failure: true
+  script:
+    - for area in staging prod jobs; do kubectl get pods,deployments,jobs -n "$TEAM-$area"; done
+# Build success establishes a deployable image, not a working model or passing SLO.
+# Add reviewed model packaging, staging acceptance, and manually approved production
+# promotion with digest pinning and rollback as described in deploy/README.md.

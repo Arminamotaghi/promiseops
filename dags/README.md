@@ -1,0 +1,1 @@
+Write Airflow 3 DAGs for released feed ingestion, queued candidate training and maturity-aware monitoring/retraining. No fit call in the shared scheduler. Use the staff-provided company gateway contract; retries must preserve batch/request identity. Production deployment needs human approval in CI.

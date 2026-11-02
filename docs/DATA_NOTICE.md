@@ -1,0 +1,9 @@
+# Data attribution and preparation
+
+Source: **Olist Brazilian E-Commerce Public Dataset**, Olist, [dataset page](https://www.kaggle.com/datasets/olistbr/brazilian-ecommerce). The dataset lists [CC BY-NC-SA 4.0](https://creativecommons.org/licenses/by-nc-sa/4.0/). Preserve attribution, license and modification notes with course data exports. This course use is educational/noncommercial; do not sell or relicense the source data.
+
+The local source was recovered from the existing `group04-project-feature-pipeline.zip` course archive. Only original-named relational CSVs are read; no prior student's implementation or engineered feature file is used. The preparation manifest records the course archive checksum and each CSV's checksum. The source has not been independently re-downloaded and byte-compared against Kaggle in this session.
+
+Changes: select completed delivered orders with valid dates and complete relational rows; exclude invalid chronology/missing relations; remove reviews, dispatch timestamps, final state and actual outcomes from order-feature releases; normalize timestamps assuming source naive timestamps are São Paulo local time; reduce product/customer/seller metadata to the public contract; substitute zero for missing weight and `unknown` for missing category; publish chronological two-week batches with a 2018-01-01 initial historical snapshot; publish outcomes separately with an artificial seven-day reporting delay. No synthetic observations are mixed into the real feed.
+
+The synthetic local fixtures and announced synthetic drift exercises are separately identified. They are not empirical evidence about the real marketplace. Student and reference evaluation claims must name which cohort was used.
