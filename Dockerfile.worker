@@ -1,0 +1,14 @@
+# APP_IMAGE must be your own reviewed app digest, not a mutable tag.
+ARG APP_IMAGE
+ARG UV_IMAGE
+FROM ${UV_IMAGE} AS uv
+FROM ${APP_IMAGE}
+USER root
+COPY --from=uv /uv /usr/local/bin/uv
+COPY requirements-tracking.lock /tmp/requirements-tracking.lock
+COPY tracking-wheelhouse /tmp/tracking-wheelhouse
+ENV UV_OFFLINE=1 UV_PYTHON_DOWNLOADS=never PIP_NO_INDEX=1 MLFLOW_DISABLE_TELEMETRY=true
+RUN --network=none uv pip install --python /opt/venv/bin/python --no-index --find-links /tmp/tracking-wheelhouse --require-hashes -r /tmp/requirements-tracking.lock && rm -rf /tmp/tracking-wheelhouse /tmp/requirements-tracking.lock
+USER 10001:10001
+# Implement promiseops.worker, respecting the provided training time/data contract.
+ENTRYPOINT ["python", "-m", "promiseops.worker"]

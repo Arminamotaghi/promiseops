@@ -7,4 +7,5 @@ __pycache__/
 data/
 artifacts/
 wheelhouse/
+tracking-wheelhouse/
 .pytest_cache/

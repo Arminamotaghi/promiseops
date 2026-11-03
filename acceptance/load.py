@@ -8,13 +8,15 @@ import math
 import os
 import time
 import uuid
+from collections import Counter
 from pathlib import Path
 
 import httpx
 
 
-async def run(url, order_ids, rps=10, seconds=180, max_concurrency=32):
-    latency, codes = [], []
+async def run(url, order_ids, rps=10, seconds=180, max_concurrency=32, api_key=None):
+    api_key = api_key or os.environ["PROMISEOPS_API_KEY"]
+    latency, codes, dispatch, service, errors = [], [], [], [], Counter()
     semaphore = asyncio.Semaphore(max_concurrency)
     async with httpx.AsyncClient(timeout=5, limits=httpx.Limits(max_connections=max_concurrency)) as client:
         deadline = time.monotonic() + 60
@@ -32,7 +34,7 @@ async def run(url, order_ids, rps=10, seconds=180, max_concurrency=32):
             warmup = await client.post(
                 url.rstrip("/") + "/predict",
                 json={"order_id": order_ids[0], "request_id": uuid.uuid4().hex},
-                headers={"X-API-Key": os.environ["PROMISEOPS_API_KEY"]},
+                headers={"X-API-Key": api_key},
             )
             warmup.raise_for_status()
         started = time.monotonic()
@@ -41,17 +43,21 @@ async def run(url, order_ids, rps=10, seconds=180, max_concurrency=32):
             due = started + index / rps
             await asyncio.sleep(max(0, due - time.monotonic()))
             begin = time.monotonic()
+            dispatch.append(begin - due)
             async with semaphore:
                 try:
                     response = await client.post(
                         url.rstrip("/") + "/predict",
                         json={"order_id": order_ids[index % len(order_ids)], "request_id": uuid.uuid4().hex},
-                        headers={"X-API-Key": os.environ["PROMISEOPS_API_KEY"]},
+                        headers={"X-API-Key": api_key},
                     )
                     status = response.status_code
-                except httpx.HTTPError:
+                except httpx.HTTPError as exc:
                     status = 0
-            latency.append(time.monotonic() - begin)
+                    errors[type(exc).__name__] += 1
+            finished = time.monotonic()
+            service.append(finished - begin)
+            latency.append(finished - due)
             codes.append(status)
 
         await asyncio.gather(*(request(i) for i in range(rps * seconds)))
@@ -63,6 +69,10 @@ async def run(url, order_ids, rps=10, seconds=180, max_concurrency=32):
         "target_rps": rps,
         "seconds": seconds,
         "p95_seconds": p95,
+        "dispatch_delay_p95_seconds": sorted(dispatch)[math.ceil(0.95 * len(dispatch)) - 1],
+        "request_duration_p95_seconds": sorted(service)[math.ceil(0.95 * len(service)) - 1],
+        "http_status_counts": dict(Counter(codes)),
+        "transport_errors": dict(errors),
         "server_or_transport_error_fraction": failures,
         "non_200": bad_contract,
         "warmup_requests": 5,
