@@ -36,13 +36,15 @@ build-own-image:
   artifacts:
     paths: [build.json]
 inspect-own-namespaces:
+  needs: []
   stage: inspect
   rules:
     - if: '$CI_COMMIT_REF_PROTECTED == "true"'
       when: manual
   allow_failure: true
   script:
-    - for area in staging prod jobs; do kubectl get pods,deployments,jobs -n "$TEAM-$area"; done
+    - for area in staging prod; do kubectl get pods,deployments,jobs -n "$TEAM-$area"; done
+    - kubectl get pods,jobs -n "$TEAM-jobs"
 # Build success establishes a deployable image, not a working model or passing SLO.
 # Add reviewed model packaging, staging acceptance, and manually approved production
 # promotion with digest pinning and rollback as described in deploy/README.md.
