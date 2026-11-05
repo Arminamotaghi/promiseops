@@ -15,8 +15,8 @@ buildctl --addr "$BUILDKIT_ADDR" --tlsservername "$BUILDKIT_SERVER_NAME" \
 Use the same job-local registry login as the app build. Set `APP_IMAGE` to
 `$CI_REGISTRY_IMAGE/app@sha256:...` from the reviewed app build artifact.
 The company gateway accepts only your own private worker digest, full source
-commit, explicit training/validation cutoffs and an `as_of` at or before the
-published company clock. The scheduler enforces 2 CPU / 4 GiB for each training
+commit and explicit team-selected training/validation cutoffs and `as_of`,
+with `train_end < validation_end <= as_of`. No staff clock approval is needed. The scheduler enforces 2 CPU / 4 GiB for each training
 job, two globally and one running per team. Jobs write temporary artifacts under
 `/tmp` and publish durable runs/models to your own MLflow service.
 
