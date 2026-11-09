@@ -10,6 +10,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 
 LOCAL_TZ = ZoneInfo("America/Sao_Paulo")
 SAFE_ID = r"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$"
+REQUEST_ID = r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$"
 
 
 def instant(value: str | datetime) -> datetime:
@@ -131,7 +132,7 @@ class Batch(Row):
 
 class PredictionRequest(Row):
     order_id: str = Field(pattern=SAFE_ID)
-    request_id: str | None = Field(default=None, pattern=SAFE_ID)
+    request_id: str | None = Field(default=None, pattern=REQUEST_ID)
 
 
 class PredictionResponse(Row):
