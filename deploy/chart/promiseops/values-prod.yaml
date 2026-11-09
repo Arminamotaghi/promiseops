@@ -1,0 +1,8 @@
+replicaCount: 2
+hpa:
+  enabled: true
+  minReplicas: 2
+  maxReplicas: 3
+priorityCronJob:
+  enabled: true
+  suspend: false

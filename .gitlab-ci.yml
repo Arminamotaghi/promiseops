@@ -1,4 +1,6 @@
-stages: [test, build, inspect]
+# test -> build (app, worker) -> staging -> verify -> manual production -> manual rollback by digest
+stages: [test, build, deploy-staging, verify-staging, deploy-prod, rollback]
+
 variables:
   UV_OFFLINE: "1"
   UV_PYTHON_DOWNLOADS: never
@@ -8,43 +10,205 @@ variables:
   HOME: /tmp/home
   UV_CACHE_DIR: /tmp/uv-cache
   FF_USE_ADVANCED_POD_SPEC_CONFIGURATION: "true"
+  CHART_DIR: deploy/chart/promiseops
+  HELM_RELEASE: promiseops
+  # Only this GitLab user may run production deploy / rollback (change only through a reviewed MR).
+  PROD_APPROVER: qbc13-g07-03
+  # TODO(staff): name of the staff-provided runtime secret (DB URL + API key) in staging/prod.
+  RUNTIME_SECRET_NAME: TODO-runtime-secret
+  # TODO(data): one released order ID used by the smoke test (not a secret).
+  SMOKE_ORDER_ID: TODO-order-id
+  # PROMISEOPS_API_KEY must be a masked + protected CI/CD variable (set by a Maintainer), never in this file.
+
 default:
   image: $CI_TOOLBOX_IMAGE
   tags: [promiseops]
   before_script:
     - mkdir -p "$HOME"
-contracts:
-  stage: test
+
+# ---------- reusable pieces ----------
+.not-rollback:
+  rules:
+    - if: '$ROLLBACK_DIGEST'
+      when: never
+    - when: on_success
+
+.protected-ref:
+  rules:
+    - if: '$ROLLBACK_DIGEST'
+      when: never
+    - if: '$CI_COMMIT_REF_PROTECTED == "true"'
+
+.venv-setup:
   script:
     - cp -a /opt/promiseops/wheelhouse ./wheelhouse
     - uv venv --python /usr/local/bin/python .venv
     - uv pip sync --python .venv/bin/python --no-index --find-links wheelhouse --require-hashes requirements.lock
+
+.app-digest:
+  script:
+    - APP_DIGEST="$(python -c 'import json; print(json.load(open("build.json"))["containerimage.digest"])')"
+    - echo "app digest $APP_DIGEST"
+
+.approver-check:
+  script:
+    - |
+      if [ "$GITLAB_USER_LOGIN" != "$PROD_APPROVER" ]; then
+        echo "Production changes must be started by $PROD_APPROVER (started by $GITLAB_USER_LOGIN)."; exit 1
+      fi
+
+# Needs NAMESPACE set. Port-forward keeps the Service ClusterIP-only.
+# TODO(staff): confirm the CI identity may use pods/portforward in staging/prod.
+.smoke-test:
+  script:
+    - kubectl -n "$NAMESPACE" rollout status "deployment/$HELM_RELEASE" --timeout=180s
+    - kubectl -n "$NAMESPACE" port-forward "service/$HELM_RELEASE" 18080:80 > port-forward.log 2>&1 &
+    - sleep 5
+    - .venv/bin/python acceptance/live_api.py --url http://127.0.0.1:18080 --order-id "$SMOKE_ORDER_ID"
+
+# ---------- test ----------
+contracts:
+  stage: test
+  extends: .not-rollback
+  script:
+    - !reference [.venv-setup, script]
     - uv pip install --python .venv/bin/python --no-index --no-deps --no-build-isolation .
     - .venv/bin/python -m pytest -q
+
+chart-lint:
+  stage: test
+  extends: .not-rollback
+  allow_failure: true  # TODO: set to false once helm is confirmed in the toolbox image
+  script:
+    - helm version  # TODO(staff): confirm helm is available in $CI_TOOLBOX_IMAGE
+    - |
+      for env in staging prod; do
+        helm lint "$CHART_DIR" -f "$CHART_DIR/values-$env.yaml" \
+          --set image.repository=lint/app \
+          --set image.digest=sha256:0000000000000000000000000000000000000000000000000000000000000000 \
+          --set runtimeSecretName=lint
+        helm template "$HELM_RELEASE" "$CHART_DIR" -f "$CHART_DIR/values-$env.yaml" \
+          --set image.repository=lint/app \
+          --set image.digest=sha256:0000000000000000000000000000000000000000000000000000000000000000 \
+          --set runtimeSecretName=lint > "rendered-$env.yaml"
+      done
+  artifacts:
+    paths: [rendered-staging.yaml, rendered-prod.yaml]
+    expire_in: 1 week
+
+# ---------- build ----------
 build-own-image:
   stage: build
+  extends: .protected-ref
   resource_group: image-build
-  rules:
-    - if: '$CI_COMMIT_REF_PROTECTED == "true"'
   script:
     - cp -a /opt/promiseops/wheelhouse ./wheelhouse
     - mkdir -p "$HOME/.docker"
     - python ci/registry_login.py
     - buildctl --addr "$BUILDKIT_ADDR" --tlsservername "$BUILDKIT_SERVER_NAME" --tlscacert "$BUILDKIT_CA" --tlscert "$BUILDKIT_CERT" --tlskey "$BUILDKIT_KEY" build --frontend dockerfile.v0 --local context=. --local dockerfile=. --opt build-arg:BASE_IMAGE="$BASE_IMAGE" --opt build-arg:UV_IMAGE="$UV_IMAGE" --output type=image,name="$CI_REGISTRY_IMAGE/app:$CI_COMMIT_SHA",push=true --metadata-file build.json
-    - kubectl get deployments -n "$TEAM-prod" -o name
     - python -c 'import json; assert json.load(open("build.json"))["containerimage.digest"].startswith("sha256:")'
   artifacts:
     paths: [build.json]
+
+build-worker:
+  stage: build
+  extends: .protected-ref
+  needs: [build-own-image]
+  resource_group: image-build
+  script:
+    - !reference [.app-digest, script]
+    - cp -a /opt/promiseops/tracking-wheelhouse ./tracking-wheelhouse
+    - mkdir -p "$HOME/.docker"
+    - python ci/registry_login.py
+    - buildctl --addr "$BUILDKIT_ADDR" --tlsservername "$BUILDKIT_SERVER_NAME" --tlscacert "$BUILDKIT_CA" --tlscert "$BUILDKIT_CERT" --tlskey "$BUILDKIT_KEY" build --frontend dockerfile.v0 --local context=. --local dockerfile=. --opt filename=Dockerfile.worker --opt build-arg:APP_IMAGE="$CI_REGISTRY_IMAGE/app@$APP_DIGEST" --opt build-arg:UV_IMAGE="$UV_IMAGE" --output type=image,name="$CI_REGISTRY_IMAGE/worker:$CI_COMMIT_SHA",push=true --metadata-file worker-build.json
+    - python -c 'import json; assert json.load(open("worker-build.json"))["containerimage.digest"].startswith("sha256:")'
+  artifacts:
+    paths: [worker-build.json]
+
+# ---------- staging ----------
+deploy-staging:
+  stage: deploy-staging
+  extends: .protected-ref
+  needs: [build-own-image]
+  resource_group: staging
+  environment:
+    name: staging
+  script:
+    - !reference [.app-digest, script]
+    - helm upgrade --install "$HELM_RELEASE" "$CHART_DIR" --namespace "$TEAM-staging" -f "$CHART_DIR/values-staging.yaml" --set image.repository="$CI_REGISTRY_IMAGE/app" --set image.digest="$APP_DIGEST" --set runtimeSecretName="$RUNTIME_SECRET_NAME" --atomic --wait --timeout 6m --history-max 10
+    - python ci/record_deploy.py --environment staging --digest "$APP_DIGEST" --output deploy-staging.json
+  artifacts:
+    paths: [deploy-staging.json]
+
+verify-staging:
+  stage: verify-staging
+  extends: .protected-ref
+  needs: [deploy-staging]
+  variables:
+    NAMESPACE: "$TEAM-staging"
+  script:
+    - !reference [.venv-setup, script]
+    - !reference [.smoke-test, script]
+
+# ---------- production (manual, approver-only) ----------
+deploy-prod:
+  stage: deploy-prod
+  needs: [build-own-image, verify-staging]
+  rules:
+    - if: '$ROLLBACK_DIGEST'
+      when: never
+    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH && $CI_COMMIT_REF_PROTECTED == "true"'
+      when: manual
+  allow_failure: false
+  resource_group: production
+  environment:
+    name: production
+  variables:
+    NAMESPACE: "$TEAM-prod"
+  script:
+    - !reference [.approver-check, script]
+    - !reference [.app-digest, script]
+    - |
+      ACTIVE="$(kubectl -n "$NAMESPACE" get jobs -l app.kubernetes.io/component=priority -o jsonpath='{range .items[?(@.status.active)]}{.metadata.name}{" "}{end}')"
+      if [ -n "$ACTIVE" ]; then echo "Priority scoring job still running ($ACTIVE); retry when it finishes."; exit 1; fi
+    - helm upgrade --install "$HELM_RELEASE" "$CHART_DIR" --namespace "$NAMESPACE" -f "$CHART_DIR/values-prod.yaml" --set image.repository="$CI_REGISTRY_IMAGE/app" --set image.digest="$APP_DIGEST" --set runtimeSecretName="$RUNTIME_SECRET_NAME" --atomic --wait --timeout 8m --history-max 10
+    - !reference [.venv-setup, script]
+    - !reference [.smoke-test, script]
+    - python ci/record_deploy.py --environment production --digest "$APP_DIGEST" --output deploy-prod.json
+  artifacts:
+    paths: [deploy-prod.json]
+    expire_in: never
+
+# Run pipeline on main with variable ROLLBACK_DIGEST=sha256:<earlier healthy app digest>.
+rollback-prod:
+  stage: rollback
+  rules:
+    - if: '$ROLLBACK_DIGEST && $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH && $CI_COMMIT_REF_PROTECTED == "true"'
+      when: manual
+  allow_failure: false
+  resource_group: production
+  environment:
+    name: production
+  variables:
+    NAMESPACE: "$TEAM-prod"
+  script:
+    - !reference [.approver-check, script]
+    - echo "$ROLLBACK_DIGEST" | grep -Eq '^sha256:[0-9a-f]{64}$' || { echo "ROLLBACK_DIGEST must be sha256:<64 hex>"; exit 1; }
+    - helm upgrade --install "$HELM_RELEASE" "$CHART_DIR" --namespace "$NAMESPACE" -f "$CHART_DIR/values-prod.yaml" --set image.repository="$CI_REGISTRY_IMAGE/app" --set image.digest="$ROLLBACK_DIGEST" --set runtimeSecretName="$RUNTIME_SECRET_NAME" --atomic --wait --timeout 8m --history-max 10
+    - !reference [.venv-setup, script]
+    - !reference [.smoke-test, script]
+    - python ci/record_deploy.py --environment production --digest "$ROLLBACK_DIGEST" --rollback --output rollback-prod.json
+  artifacts:
+    paths: [rollback-prod.json]
+    expire_in: never
+
 inspect-own-namespaces:
   needs: []
-  stage: inspect
+  stage: build
   rules:
     - if: '$CI_COMMIT_REF_PROTECTED == "true"'
       when: manual
   allow_failure: true
   script:
-    - for area in staging prod; do kubectl get pods,deployments,jobs -n "$TEAM-$area"; done
+    - for area in staging prod; do kubectl get pods,deployments,jobs,cronjobs,hpa -n "$TEAM-$area"; helm list -n "$TEAM-$area" || true; done
     - kubectl get pods,jobs -n "$TEAM-jobs"
-# Build success establishes a deployable image, not a working model or passing SLO.
-# Add reviewed model packaging, staging acceptance, and manually approved production
-# promotion with digest pinning and rollback as described in deploy/README.md.
