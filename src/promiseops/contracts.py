@@ -139,4 +139,4 @@ class PredictionResponse(Row):
     order_id: str
     request_id: str
     risk_probability: float = Field(ge=0, le=1)
-    model_version: str
+    model_version: str = Field(min_length=1)
