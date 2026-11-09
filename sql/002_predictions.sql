@@ -6,7 +6,7 @@ BEGIN;
 -- One row per request_id. This IS the idempotency store: a repeated request_id for the same
 -- order returns this row unchanged, even after a new model is deployed.
 CREATE TABLE IF NOT EXISTS predictions (
-    request_id        text PRIMARY KEY CHECK (request_id ~ '^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$'),
+    request_id        text PRIMARY KEY CHECK (request_id ~ '^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$'),
     order_id          text NOT NULL REFERENCES orders (order_id),
     risk_probability  double precision NOT NULL CHECK (risk_probability >= 0 AND risk_probability <= 1),
     model_version     text NOT NULL CHECK (length(model_version) > 0),
