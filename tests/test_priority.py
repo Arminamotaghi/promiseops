@@ -70,30 +70,37 @@ def test_duplicate_order_ids_are_rejected():
         select_top_priority(orders)
 
 
-def test_build_priority_output_contains_contract_fields():
+def test_build_priority_output_matches_public_contract():
     from promiseops.priority import build_priority_output
 
     orders = [
         {"order_id": f"order-{i:02d}", "risk_probability": i / 12}
         for i in range(1, 12)
     ]
-
     result = build_priority_output(
         as_of="2026-11-10T00:00:00Z",
-        batch_id="batch-001",
-        cohort_id="cohort-001",
+        cohort_id="released:(2026-11-01T00:00:00Z,2026-11-10T00:00:00Z]",
+        cohort_rule="orders with released_at in (previous as_of, as_of] that have no batch prediction yet",
+        cohort_hash="a" * 64,
         model_version="model-001",
         scored_orders=orders,
     )
 
     assert result["schema_version"] == "1.0"
-    assert result["as_of"] == "2026-11-10T00:00:00+00:00"
-    assert result["batch_id"] == "batch-001"
-    assert result["cohort_id"] == "cohort-001"
+    assert result["as_of"] == "2026-11-10T00:00:00Z"
+    assert result["cohort"]["id"].startswith("released:")
+    assert result["cohort"]["rule"].startswith("orders with released_at")
+    assert result["cohort"]["hash"] == "a" * 64
     assert result["model_version"] == "model-001"
     assert result["scored_count"] == 11
-    assert len(result["top_orders"]) == 2
-    assert result["top_orders"][0]["order_id"] == "order-11"
+    assert result["k"] == 2
+    assert len(result["orders"]) == 2
+    assert result["orders"][0] == {
+        "rank": 1,
+        "order_id": "order-11",
+        "risk_probability": 11 / 12,
+    }
+    assert result["orders"][1]["rank"] == 2
 
 
 def test_tied_orders_inside_top_k_are_sorted_by_order_id():
@@ -114,3 +121,58 @@ def test_tied_orders_inside_top_k_are_sorted_by_order_id():
         "order-m",
         "order-z",
     ]
+
+
+def test_build_run_id_is_deterministic():
+    from promiseops.priority import build_run_id
+
+    cohort_hash = "a" * 64
+    first = build_run_id(cohort_hash, "model-001")
+    second = build_run_id(cohort_hash, "model-001")
+
+    assert first == second
+    assert len(first) == 64
+    assert all(char in "0123456789abcdef" for char in first)
+
+
+def test_build_run_id_changes_with_model_version():
+    from promiseops.priority import build_run_id
+
+    cohort_hash = "a" * 64
+
+    assert build_run_id(cohort_hash, "model-001") != build_run_id(
+        cohort_hash, "model-002"
+    )
+
+
+@pytest.mark.parametrize(
+    "cohort_hash",
+    ["", "abc", "A" * 64, "g" * 64, None],
+)
+def test_build_run_id_rejects_invalid_cohort_hash(cohort_hash):
+    from promiseops.priority import build_run_id
+
+    with pytest.raises(ValueError):
+        build_run_id(cohort_hash, "model-001")
+
+
+@pytest.mark.parametrize("model_version", ["", None, 123])
+def test_build_run_id_rejects_invalid_model_version(model_version):
+    from promiseops.priority import build_run_id
+
+    with pytest.raises(ValueError):
+        build_run_id("a" * 64, model_version)
+
+
+def test_build_priority_output_rejects_naive_as_of():
+    from promiseops.priority import build_priority_output
+
+    with pytest.raises(ValueError):
+        build_priority_output(
+            as_of="2026-11-10T00:00:00",
+            cohort_id="cohort-001",
+            cohort_rule="test rule",
+            cohort_hash="a" * 64,
+            model_version="model-001",
+            scored_orders=[],
+        )
