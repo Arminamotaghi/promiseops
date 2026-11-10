@@ -1,0 +1,12 @@
+groups:
+  - name: promiseops-alerts
+    rules:
+      - alert: PromiseOpsNotReady
+        expr: promiseops_readiness == 0
+        for: 2m
+        labels:
+          severity: warning
+          service: promiseops
+        annotations:
+          summary: "PromiseOps API is not ready"
+          description: "The PromiseOps API has remained not ready for more than 2 minutes."

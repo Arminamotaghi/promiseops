@@ -31,3 +31,6 @@ def test_metrics_returns_prometheus_output(monkeypatch):
     assert response.status_code == 200
     assert "text/plain" in response.headers["content-type"]
     assert "promiseops_http_requests_total" in response.text
+    assert "promiseops_http_request_duration_seconds" in response.text
+    assert "promiseops_readiness" in response.text
+    assert "promiseops_model_info" in response.text
