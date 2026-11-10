@@ -18,3 +18,16 @@ def test_readyz_returns_503_when_not_ready():
 
     assert response.status_code == 503
     assert response.json() == {"status": "not_ready"}
+
+def test_metrics_returns_prometheus_output(monkeypatch):
+    monkeypatch.setenv("PROMISEOPS_API_KEY", "test-secret")
+    client = TestClient(create_app())
+
+    response = client.get(
+        "/metrics",
+        headers={"X-API-Key": "test-secret"},
+    )
+
+    assert response.status_code == 200
+    assert "text/plain" in response.headers["content-type"]
+    assert "promiseops_http_requests_total" in response.text

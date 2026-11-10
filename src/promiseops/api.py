@@ -1,17 +1,24 @@
 import hmac
 import os
 
-from fastapi import FastAPI
-from fastapi.responses import JSONResponse
+from fastapi import FastAPI, Request
+from fastapi.responses import JSONResponse, Response
+from prometheus_client import CONTENT_TYPE_LATEST, Counter, generate_latest
 
 from promiseops.contracts import PredictionRequest
+
+REQUESTS = Counter(
+    "promiseops_http_requests_total",
+    "Total HTTP requests",
+    ["route", "status"],
+)
 
 
 def create_app():
     app = FastAPI(title="PromiseOps")
 
     @app.middleware("http")
-    async def check_api_key(request, call_next):
+    async def check_api_key(request: Request, call_next):
         if request.url.path in {"/predict", "/metrics"}:
             expected = os.getenv("PROMISEOPS_API_KEY", "")
             supplied = request.headers.get("X-API-Key", "")
@@ -27,7 +34,11 @@ def create_app():
                     },
                 )
 
-        return await call_next(request)
+        response = await call_next(request)
+        route = request.scope.get("route")
+        route_name = getattr(route, "path", "unmatched")
+        REQUESTS.labels(route_name, str(response.status_code)).inc()
+        return response
 
     @app.get("/healthz")
     def healthz():
@@ -38,6 +49,13 @@ def create_app():
         return JSONResponse(
             status_code=503,
             content={"status": "not_ready"},
+        )
+
+    @app.get("/metrics")
+    def metrics():
+        return Response(
+            generate_latest(),
+            media_type=CONTENT_TYPE_LATEST,
         )
 
     @app.post("/predict")
