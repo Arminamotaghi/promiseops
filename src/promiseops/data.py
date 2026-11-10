@@ -1,4 +1,6 @@
-"""Own-team transactional ingestion and a single leakage-safe feature builder."""
+"""Own-team transactional ingestion; features live in one shared module."""
+
+from promiseops.features import build_features
 
 
 def ingest_batch(connection, payload, *, as_of, expected_sha256):
@@ -6,6 +8,4 @@ def ingest_batch(connection, payload, *, as_of, expected_sha256):
     raise NotImplementedError("Implement the public ingestion contract")
 
 
-def build_features(connection, order_ids, *, as_of, labeled=False):
-    """Aggregate one-to-many relations independently; never use outcome fields as features."""
-    raise NotImplementedError("Implement shared training/serving features")
+__all__ = ["build_features", "ingest_batch"]
