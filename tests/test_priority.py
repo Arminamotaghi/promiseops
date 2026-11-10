@@ -94,3 +94,23 @@ def test_build_priority_output_contains_contract_fields():
     assert result["scored_count"] == 11
     assert len(result["top_orders"]) == 2
     assert result["top_orders"][0]["order_id"] == "order-11"
+
+
+def test_tied_orders_inside_top_k_are_sorted_by_order_id():
+    orders = [
+        {"order_id": "order-z", "risk_probability": 0.9},
+        {"order_id": "order-m", "risk_probability": 0.9},
+        {"order_id": "order-a", "risk_probability": 0.9},
+    ] + [
+        {"order_id": f"order-{i:02d}", "risk_probability": 0.1}
+        for i in range(18)
+    ]
+
+    result = select_top_priority(orders)
+
+    assert len(result) == 3
+    assert [order["order_id"] for order in result] == [
+        "order-a",
+        "order-m",
+        "order-z",
+    ]
