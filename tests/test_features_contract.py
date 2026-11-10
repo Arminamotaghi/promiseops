@@ -47,7 +47,11 @@ def test_feature_contract_hash_matches_release_contract():
 
 def test_no_forbidden_input_is_a_feature():
     assert not FORBIDDEN_INPUTS & set(FEATURES)
-    assert not FORBIDDEN_INPUTS & set(LABEL_COLUMNS)
+
+
+def test_label_columns_are_forbidden_inputs_but_not_features():
+    assert set(LABEL_COLUMNS) <= FORBIDDEN_INPUTS
+    assert not set(LABEL_COLUMNS) & set(FEATURES)
 
 
 def test_forbidden_inputs_cover_raw_leakage_columns():
