@@ -29,7 +29,7 @@ CREATE TABLE IF NOT EXISTS sellers (
 CREATE TABLE IF NOT EXISTS products (
     product_id      text PRIMARY KEY,
     category        text NOT NULL CHECK (length(category) BETWEEN 1 AND 100),
-    weight_g        double precision NOT NULL CHECK (weight_g >= 0 AND weight_g <= 1000000),
+    weight_g        double precision NOT NULL CHECK (weight_g >= 0 AND weight_g <= 1000000 AND weight_g = weight_g AND weight_g != 'Infinity' AND weight_g != '-Infinity'),
     row_sha256      char(64) NOT NULL,
     first_batch_id  text NOT NULL
 );
@@ -52,8 +52,8 @@ CREATE TABLE IF NOT EXISTS items (
     item_id         integer NOT NULL CHECK (item_id >= 1),
     product_id      text NOT NULL REFERENCES products (product_id),
     seller_id       text NOT NULL REFERENCES sellers (seller_id),
-    price           double precision NOT NULL CHECK (price >= 0 AND price <= 10000000),
-    freight         double precision NOT NULL CHECK (freight >= 0 AND freight <= 10000000),
+    price           double precision NOT NULL CHECK (price >= 0 AND price <= 10000000 AND price = price AND price != 'Infinity' AND price != '-Infinity'),
+    freight         double precision NOT NULL CHECK (freight >= 0 AND freight <= 10000000 AND freight = freight AND freight != 'Infinity' AND freight != '-Infinity'),
     row_sha256      char(64) NOT NULL,
     PRIMARY KEY (order_id, item_id)
 );
@@ -63,7 +63,7 @@ CREATE TABLE IF NOT EXISTS payments (
     sequence        integer NOT NULL CHECK (sequence >= 1),
     payment_type    text NOT NULL CHECK (length(payment_type) BETWEEN 1 AND 40),
     installments    integer NOT NULL CHECK (installments BETWEEN 0 AND 100),
-    value           double precision NOT NULL CHECK (value >= 0 AND value <= 10000000),
+    value           double precision NOT NULL CHECK (value >= 0 AND value <= 10000000 AND value = value AND value != 'Infinity' AND value != '-Infinity'),
     row_sha256      char(64) NOT NULL,
     PRIMARY KEY (order_id, sequence)
 );
@@ -101,7 +101,7 @@ CREATE TABLE IF NOT EXISTS quarantine (
     batch_id        text,                   -- may be NULL/unsafe if the envelope itself is broken
     payload_sha256  char(64),
     file_sha256     char(64) NOT NULL,
-    reason_code     text NOT NULL,          -- e.g. checksum_mismatch, schema_invalid, missing_fk ...
+    reason_code     text NOT NULL CHECK (reason_code ~ '^[a-z0-9_]{3,64}$'),  -- e.g. checksum_mismatch, schema_invalid, missing_fk ...
     reason_detail   text NOT NULL,          -- human readable, NO secrets
     raw_payload     bytea NOT NULL,         -- exact bytes we received
     feed_as_of      timestamptz,
@@ -114,5 +114,20 @@ COMMIT;
 -- OPEN QUESTIONS for the MR (Mohammadreza decides, team reviews):
 --  1. An identical ORDER row re-sent under a different batch_id: no-op or reject?
 --     (CONTRACTS only says identical DIMENSION rows are reusable.)
+--Answer 1. REPEAT ORDER_ID IN DIFFERENT BATCH:
+--Rationale: Based on the Immutability rule in CONTRACTS.md, dimension rows are reusable
+--if identical (row_sha256 matches). Any deviation is an integrity violation.
+--     - Implementation: 
+--          If row_sha256 matches: No-op (Idempotent success).
+--          If row_sha256 differs: Trigger 'immutable_row_changed' error; reject batch to quarantine.
+
+
 --  2. Should rejected re-tries of the same broken file add a second quarantine row,
 --     or reuse the first one (unique on file_sha256 + reason_code)?
+-- Answer 2. RETRY MECHANISM:
+-- Rationale: Based on ASSESSMENT.fa.md (Audit trail requirements), failure history must be explicit.
+--     - Implementation:
+--          Each failed ingestion attempt must be distinct for auditing.
+--          Retrying a failed file creates a new unique record in the 'quarantine' table to 
+--          maintain a full audit trail of failure history, allowing monitoring systems to track 
+--          retry frequency per file.
