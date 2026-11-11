@@ -26,3 +26,16 @@ def test_score_priority_rejects_as_of_without_timezone(monkeypatch):
         main()
 
     assert exc.value.code == 2
+
+
+def test_score_priority_accepts_missing_as_of(monkeypatch, capsys):
+    monkeypatch.setattr(
+        "sys.argv",
+        ["promiseops", "score-priority"],
+    )
+
+    assert main() == 1
+
+    output = capsys.readouterr()
+    assert "database and model integration are not implemented" in output.err
+    assert "as_of=" in output.err

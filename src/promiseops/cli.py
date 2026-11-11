@@ -1,6 +1,7 @@
 """Command-line interface for PromiseOps."""
 
 import argparse
+from datetime import datetime, timezone
 import sys
 
 from promiseops.contracts import instant
@@ -16,7 +17,7 @@ def main():
     )
     priority_parser.add_argument(
         "--as-of",
-        required=True,
+        required=False,
         help="Timezone-aware scoring cutoff, for example 2018-01-01T00:00:00Z",
     )
 
@@ -24,7 +25,11 @@ def main():
 
     if args.command == "score-priority":
         try:
-            as_of = instant(args.as_of)
+            as_of = (
+                instant(args.as_of)
+                if args.as_of is not None
+                else datetime.now(timezone.utc)
+            )
         except (TypeError, ValueError) as exc:
             parser.error(f"invalid --as-of: {exc}")
 
