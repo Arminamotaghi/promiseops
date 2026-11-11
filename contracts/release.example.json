@@ -1,0 +1,40 @@
+{
+  "schema_version": "1.0",
+  "model_version": "late-risk-hgb.v3.4f2a91c0",
+  "model_file": "model.joblib",
+  "model_sha256": "4f2a91c0d1e2f3a4b5c6d7e8f90123456789abcdef0123456789abcdef012345",
+  "approach": "hist_gradient_boosting",
+  "features": [
+    "item_count", "seller_count", "total_price", "total_freight", "total_weight_g",
+    "payment_total", "max_installments", "promise_days", "approval_hour", "approval_weekday",
+    "interstate_fraction", "customer_state", "primary_seller_state", "primary_category",
+    "primary_payment_type"
+  ],
+  "feature_contract_sha256": "2dbf79e7bc30c5d5744e113575120c14972fb17905a7784dfe44441185763fc5",
+  "source_commit": "0123456789abcdef0123456789abcdef01234567",
+  "software": {"python": "3.12", "scikit-learn": "1.9.0", "pandas": "3.0.5", "numpy": "2.5.3"},
+  "mlflow": {"experiment": "promiseops-g07", "run_id": "a1b2c3d4e5f6", "registered_model": "promiseops-late-risk", "version": "3"},
+  "data": {"schema_version": "1.0", "feed_as_of": "2018-05-01T00:00:00Z", "last_batch_id": "orders-2018-04-15"},
+  "cutoffs": {
+    "train_end": "2017-12-31T23:59:59Z",
+    "validation_end": "2018-03-31T23:59:59Z",
+    "as_of": "2018-05-01T00:00:00Z",
+    "label_cutoff_train": "2017-12-31T23:59:59Z",
+    "label_cutoff_validation": "2018-05-01T00:00:00Z"
+  },
+  "validation": {
+    "cohort_hash": "9c1e...sha256-of-sorted-order-ids",
+    "n": 15000,
+    "prevalence": 0.081,
+    "recall_at_10": 0.34,
+    "precision_at_10": 0.27,
+    "average_precision": 0.21,
+    "brier": 0.068
+  },
+  "gate": {
+    "champion_version": "late-risk-baseline.v1.7d3e0b11",
+    "decision": "accepted",
+    "reasons": ["recall_at_10 +0.24", "average_precision +0.13", "brier -0.006"]
+  },
+  "created_at": "2026-11-12T10:00:00Z"
+}
