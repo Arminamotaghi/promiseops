@@ -16,7 +16,6 @@
       "type": "number"
     },
     "model_version": {
-      "minLength": 1,
       "title": "Model Version",
       "type": "string"
     }

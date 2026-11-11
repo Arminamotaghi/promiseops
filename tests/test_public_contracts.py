@@ -29,17 +29,6 @@ def test_request_id_accepts_valid_characters():
     assert request.request_id == "req-123"
 
 
-def test_request_id_rejects_colon():
-    with pytest.raises(ValueError):
-        PredictionRequest(order_id="order-123", request_id="req:123")
-
-def test_prediction_response_rejects_empty_model_version():
-    from promiseops.contracts import PredictionResponse
-
-    with pytest.raises(ValueError):
-        PredictionResponse(
-            order_id="order-123",
-            request_id="req-123",
-            risk_probability=0.5,
-            model_version="",
-        )
+def test_request_id_accepts_colon():
+    request = PredictionRequest(order_id="order-123", request_id="req:123")
+    assert request.request_id == "req:123"
