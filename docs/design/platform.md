@@ -30,6 +30,8 @@ rollback: rollback-prod (دستی؛ با ROLLBACK_DIGEST)
 ```
 
 - buildها و deployها فقط روی branch محافظت‌شده (main) اجرا می‌شوند. روی branchهای کاری فقط تست.
+- تا وقتی اسم secret معلوم نشده و image مدل baseline ندارد، `deploy-staging` و `verify-staging` **دستی‌اند** (`STAGING_AUTO_DEPLOY: "false"`)؛ وگرنه هر pipeline روی main قرمز می‌شد. بعد از آماده شدن، مقدار را `"true"` کنید.
+- job دستی `inspect-own-namespaces` اسم secretها و service accountهای staging و prod را نشان می‌دهد (فقط اسم، نه مقدار).
 - `--atomic`: اگر rollout در زمان مشخص ready نشود، Helm خودکار به revision قبلی برمی‌گردد. این همان «بازیابی خودکار rollout خراب» است.
 - `deploy-prod` اگر job امتیازدهی در حال اجرا باشد صبر می‌کند (جا برای pod اضافه).
 - هر deploy یک فایل شاهد می‌سازد: digest، commit، شروع‌کننده، لینک pipeline و زمان (`ci/record_deploy.py`).

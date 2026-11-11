@@ -18,6 +18,9 @@ variables:
   RUNTIME_SECRET_NAME: TODO-runtime-secret
   # TODO(data): one released order ID used by the smoke test (not a secret).
   SMOKE_ORDER_ID: TODO-order-id
+  # Staging deploys are manual until the runtime secret name is known and the image carries a
+  # model bundle (otherwise /readyz is 503 and every main pipeline would fail). Then set "true".
+  STAGING_AUTO_DEPLOY: "false"
   # PROMISEOPS_API_KEY must be a masked + protected CI/CD variable (set by a Maintainer), never in this file.
 
 default:
@@ -126,9 +129,18 @@ build-worker:
     paths: [worker-build.json]
 
 # ---------- staging ----------
+.staging-rules:
+  rules:
+    - if: '$ROLLBACK_DIGEST'
+      when: never
+    - if: '$CI_COMMIT_REF_PROTECTED == "true" && $STAGING_AUTO_DEPLOY == "true"'
+    - if: '$CI_COMMIT_REF_PROTECTED == "true"'
+      when: manual
+      allow_failure: true
+
 deploy-staging:
   stage: deploy-staging
-  extends: .protected-ref
+  extends: .staging-rules
   needs: [build-own-image]
   resource_group: staging
   environment:
@@ -142,7 +154,7 @@ deploy-staging:
 
 verify-staging:
   stage: verify-staging
-  extends: .protected-ref
+  extends: .staging-rules
   needs: [deploy-staging]
   variables:
     NAMESPACE: "$TEAM-staging"
@@ -211,4 +223,6 @@ inspect-own-namespaces:
   allow_failure: true
   script:
     - for area in staging prod; do kubectl get pods,deployments,jobs,cronjobs,hpa -n "$TEAM-$area"; helm list -n "$TEAM-$area" || true; done
+    # Names only (never values): tells us which runtime/pull secrets and service accounts exist.
+    - for area in staging prod; do kubectl get secrets,serviceaccounts -n "$TEAM-$area" -o name || true; done
     - kubectl get pods,jobs -n "$TEAM-jobs"
