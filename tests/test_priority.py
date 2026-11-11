@@ -176,3 +176,42 @@ def test_build_priority_output_rejects_naive_as_of():
             model_version="model-001",
             scored_orders=[],
         )
+
+
+def test_calculate_k_boundaries():
+    from promiseops.priority import calculate_k
+
+    assert calculate_k(0) == 0
+    assert calculate_k(1) == 1
+    assert calculate_k(10) == 1
+    assert calculate_k(11) == 2
+    assert calculate_k(20) == 2
+    assert calculate_k(21) == 3
+
+
+def test_calculate_k_boundaries():
+    from promiseops.priority import calculate_k
+
+    assert calculate_k(0) == 0
+    assert calculate_k(1) == 1
+    assert calculate_k(10) == 1
+    assert calculate_k(11) == 2
+    assert calculate_k(20) == 2
+    assert calculate_k(21) == 3
+
+
+def test_empty_cohort_priority_output():
+    from promiseops.priority import build_priority_output
+
+    result = build_priority_output(
+        as_of="2026-11-12T00:00:00Z",
+        cohort_id="empty-cohort",
+        cohort_rule="test empty cohort",
+        cohort_hash="a" * 64,
+        model_version="model-001",
+        scored_orders=[],
+    )
+
+    assert result["scored_count"] == 0
+    assert result["k"] == 0
+    assert result["orders"] == []

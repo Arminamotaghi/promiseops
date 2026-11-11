@@ -23,6 +23,15 @@ def build_run_id(cohort_hash: str, model_version: str) -> str:
     return hashlib.sha256(payload).hexdigest()
 
 
+def calculate_k(scored_count: int) -> int:
+    """Return the top-10% selection size, including empty cohorts."""
+    if isinstance(scored_count, bool) or not isinstance(scored_count, int):
+        raise TypeError("scored_count must be an integer")
+    if scored_count < 0:
+        raise ValueError("scored_count must be non-negative")
+    return math.ceil(scored_count / 10)
+
+
 def select_top_priority(scored_orders: Iterable[Mapping]) -> list[dict]:
     """Select ceil(10% of the cohort), ordered by risk then order ID."""
     orders = list(scored_orders)
@@ -43,7 +52,7 @@ def select_top_priority(scored_orders: Iterable[Mapping]) -> list[dict]:
         if not math.isfinite(risk) or not 0 <= risk <= 1:
             raise ValueError("risk_probability must be between 0 and 1")
 
-    k = math.ceil(0.1 * len(orders))
+    k = calculate_k(len(orders))
     ordered = sorted(
         orders,
         key=lambda order: (-order["risk_probability"], order["order_id"]),
@@ -75,7 +84,7 @@ def build_priority_output(
     normalized_as_of = instant(as_of).isoformat().replace("+00:00", "Z")
     orders = list(scored_orders)
     selected = select_top_priority(orders)
-    k = max(1, math.ceil(0.1 * len(orders)))
+    k = calculate_k(len(orders))
 
     return {
         "schema_version": "1.0",
