@@ -9,7 +9,7 @@
 | Deployment `promiseops` | ۱ replica | ۲ replica (HPA) |
 | Service (ClusterIP، پورت 80 ← 8080) | ✓ | ✓ |
 | HPA (CPU 70٪، ۲ تا ۳) | — | ✓ |
-| CronJob `promiseops-priority` | suspend (اجرای دستی) | هر ساعت |
+| CronJob `promiseops-priority` | suspend (اجرای دستی) | فعلاً suspend؛ بعد از یکپارچه شدن امتیازدهی batch، هر ساعت |
 
 - image فقط با digest: `repository@sha256:...`. tag باعث خطای render می‌شود.
 - منابع: request `250m / 384Mi`، limit `750m / 768Mi`. ۳ replica + ۱ pod اضافهٔ rollout دقیقاً در بودجهٔ ۳ CPU / 3GiB جا می‌شود.
