@@ -25,7 +25,7 @@ CREATE TABLE IF NOT EXISTS priority_runs (
     cohort_hash    char(64) NOT NULL,
     model_version  text NOT NULL,
     scored_count   integer NOT NULL CHECK (scored_count >= 0),
-    k              integer NOT NULL CHECK (k >= 1),
+    k              integer NOT NULL CHECK (k >= 0),
     output         jsonb NOT NULL,             -- exactly the published JSON (contracts/priority.example.json)
     created_at     timestamptz NOT NULL DEFAULT now()
 );

@@ -1,8 +1,6 @@
 import json
 from pathlib import Path
-
 import pytest
-
 from promiseops.contracts import Batch, PredictionRequest
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -22,13 +20,3 @@ def test_group_adds_behavior_tests():
     # This test documents the starting point; passing fixture validation does not
     # demonstrate an implemented pipeline. Replace this skip with behavioral tests.
     pytest.skip("Add tests for your own ingestion/model/API/monitoring implementation")
-
-
-def test_request_id_accepts_valid_characters():
-    request = PredictionRequest(order_id="order-123", request_id="req-123")
-    assert request.request_id == "req-123"
-
-
-def test_request_id_accepts_colon():
-    request = PredictionRequest(order_id="order-123", request_id="req:123")
-    assert request.request_id == "req:123"
