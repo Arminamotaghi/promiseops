@@ -12,18 +12,22 @@ from prometheus_client import (
     Info,
     generate_latest,
 )
-
+from sqlalchemy.exc import SQLAlchemyError
 from promiseops.contracts import PredictionRequest
 
 REQUESTS = Counter(
     "promiseops_http_requests_total",
     "Total HTTP requests",
-    ["route", "status"],
+    ["route", "method", "status"],
 )
-LATENCY = Histogram(
+REQUEST_DURATION = Histogram(
     "promiseops_http_request_duration_seconds",
-    "HTTP request duration",
+    "HTTP request duration in seconds",
     ["route"],
+)
+MODEL_READY = Gauge(
+    "promiseops_model_ready",
+    "Whether the prediction model is loaded",
 )
 
 READINESS = Gauge(
@@ -40,8 +44,18 @@ READINESS.set(0)
 MODEL.info({"model_version": "unknown"})
 
 
-def create_app():
+def error_response(status_code: int, code: str, message: str) -> JSONResponse:
+    return JSONResponse(
+        status_code=status_code,
+        content={"error": {"code": code, "message": message}},
+    )
+
+
+def create_app(*, model=None, database_ready=None):
     app = FastAPI(title="PromiseOps")
+    app.state.model = model
+    MODEL_READY.set(1 if model is not None else 0)
+    app.state.database_ready = database_ready or (lambda: False)
 
     @app.middleware("http")
     async def check_api_key(request: Request, call_next):
@@ -49,23 +63,29 @@ def create_app():
         if request.url.path in {"/predict", "/metrics"}:
             expected = os.getenv("PROMISEOPS_API_KEY", "")
             supplied = request.headers.get("X-API-Key", "")
-
             if not expected or not hmac.compare_digest(supplied, expected):
-                return JSONResponse(
-                    status_code=401,
-                    content={
-                        "error": {
-                            "code": "unauthorized",
-                            "message": "Invalid or missing API key",
-                        }
-                    },
+                response = error_response(
+                    401, "unauthorized", "Invalid or missing API key"
                 )
+                REQUESTS.labels(
+                    request.url.path, request.method, "401"
+                ).inc()
+                route = request.scope.get("route")
+                route_name = getattr(route, "path", "unmatched")
+                REQUEST_DURATION.labels(route_name).observe(
+                    time.perf_counter() - started
+                )
+                return response
 
         response = await call_next(request)
         route = request.scope.get("route")
         route_name = getattr(route, "path", "unmatched")
-        REQUESTS.labels(route_name, str(response.status_code)).inc()
-        LATENCY.labels(route_name).observe(time.perf_counter() - started)
+        REQUESTS.labels(
+            route_name, request.method, str(response.status_code)
+        ).inc()
+        REQUEST_DURATION.labels(route_name).observe(
+            time.perf_counter() - started
+        )
         return response
 
     @app.get("/healthz")
@@ -74,7 +94,17 @@ def create_app():
 
     @app.get("/readyz")
     def readyz():
-        READINESS.set(0)
+        model_ready = app.state.model is not None
+        try:
+            db_ready = bool(app.state.database_ready())
+        except (SQLAlchemyError, OSError):
+            db_ready = False
+
+        is_ready = model_ready and db_ready
+        READINESS.set(1 if is_ready else 0)
+
+        if is_ready:
+            return {"status": "ready"}
         return JSONResponse(
             status_code=503,
             content={"status": "not_ready"},
@@ -89,14 +119,17 @@ def create_app():
 
     @app.post("/predict")
     def predict(payload: PredictionRequest):
-        return JSONResponse(
-            status_code=503,
-            content={
-                "error": {
-                    "code": "model_unavailable",
-                    "message": "Prediction model is not available",
-                }
-            },
+        if app.state.model is None:
+            return error_response(
+                503,
+                "model_unavailable",
+                "Prediction model is not available",
+            )
+
+        return error_response(
+            503,
+            "model_unavailable",
+            "Prediction model integration is not configured",
         )
 
     return app
