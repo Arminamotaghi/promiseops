@@ -4,15 +4,9 @@ import time
 
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse, Response
-from prometheus_client import (
-    CONTENT_TYPE_LATEST,
-    Counter,
-    Gauge,
-    Histogram,
-    Info,
-    generate_latest,
-)
+from prometheus_client import CONTENT_TYPE_LATEST, Counter, Gauge, Histogram, generate_latest
 from sqlalchemy.exc import SQLAlchemyError
+
 from promiseops.contracts import PredictionRequest
 
 REQUESTS = Counter(
@@ -29,19 +23,6 @@ MODEL_READY = Gauge(
     "promiseops_model_ready",
     "Whether the prediction model is loaded",
 )
-
-READINESS = Gauge(
-    "promiseops_readiness",
-    "Whether the service is ready",
-)
-
-MODEL = Info(
-    "promiseops_model",
-    "Loaded model information",
-)
-
-READINESS.set(0)
-MODEL.info({"model_version": "unknown"})
 
 
 def error_response(status_code: int, code: str, message: str) -> JSONResponse:
@@ -83,9 +64,7 @@ def create_app(*, model=None, database_ready=None):
         REQUESTS.labels(
             route_name, request.method, str(response.status_code)
         ).inc()
-        REQUEST_DURATION.labels(route_name).observe(
-            time.perf_counter() - started
-        )
+        REQUEST_DURATION.labels(route_name).observe(time.perf_counter() - started)
         return response
 
     @app.get("/healthz")
@@ -100,11 +79,9 @@ def create_app(*, model=None, database_ready=None):
         except (SQLAlchemyError, OSError):
             db_ready = False
 
-        is_ready = model_ready and db_ready
-        READINESS.set(1 if is_ready else 0)
-
-        if is_ready:
+        if model_ready and db_ready:
             return {"status": "ready"}
+
         return JSONResponse(
             status_code=503,
             content={"status": "not_ready"},

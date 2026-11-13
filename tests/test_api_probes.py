@@ -64,5 +64,3 @@ def test_metrics_expose_http_counter_histogram_and_model_gauge(monkeypatch):
     assert 'method="GET"' in response.text
     assert "promiseops_http_request_duration_seconds" in response.text
     assert "promiseops_model_ready" in response.text
-    assert "promiseops_readiness" in response.text
-    assert "promiseops_model_info" in response.text

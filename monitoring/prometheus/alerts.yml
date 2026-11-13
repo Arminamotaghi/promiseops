@@ -1,12 +1,43 @@
 groups:
   - name: promiseops-alerts
     rules:
-      - alert: PromiseOpsNotReady
-        expr: promiseops_readiness == 0
+      - alert: PromiseOpsModelNotReady
+        expr: promiseops_model_ready == 0
         for: 2m
         labels:
           severity: warning
           service: promiseops
         annotations:
-          summary: "PromiseOps API is not ready"
-          description: "The PromiseOps API has remained not ready for more than 2 minutes."
+          summary: "PromiseOps model is not ready"
+          description: "The prediction model has remained unavailable for more than 2 minutes."
+
+      - alert: PromiseOpsHigh5xxRate
+        expr: |
+          (
+            sum(rate(promiseops_http_requests_total{status=~"5.."}[5m]))
+            /
+            clamp_min(sum(rate(promiseops_http_requests_total[5m])), 1e-9)
+          ) > 0.01
+        for: 5m
+        labels:
+          severity: warning
+          service: promiseops
+        annotations:
+          summary: "PromiseOps HTTP 5xx rate is above 1%"
+          description: "More than 1% of HTTP requests are returning 5xx responses."
+
+      - alert: PromiseOpsHighP95Latency
+        expr: |
+          histogram_quantile(
+            0.95,
+            sum by (le) (
+              rate(promiseops_http_request_duration_seconds_bucket[5m])
+            )
+          ) > 0.5
+        for: 5m
+        labels:
+          severity: warning
+          service: promiseops
+        annotations:
+          summary: "PromiseOps p95 latency is above 0.5 seconds"
+          description: "The 95th percentile HTTP request duration has exceeded 0.5 seconds."

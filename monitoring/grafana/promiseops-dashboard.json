@@ -1,7 +1,10 @@
 {
   "uid": "promiseops",
   "title": "PromiseOps - API Monitoring",
-  "tags": ["promiseops", "monitoring"],
+  "tags": [
+    "promiseops",
+    "monitoring"
+  ],
   "timezone": "browser",
   "schemaVersion": 39,
   "version": 1,
@@ -15,8 +18,16 @@
       "id": 1,
       "title": "Request Rate",
       "type": "timeseries",
-      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 0},
-      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 0
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
       "targets": [
         {
           "expr": "sum by (route) (rate(promiseops_http_requests_total[5m]))",
@@ -29,10 +40,20 @@
       "id": 2,
       "title": "Request Latency p95",
       "type": "timeseries",
-      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 0},
-      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 0
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
       "fieldConfig": {
-        "defaults": {"unit": "s"},
+        "defaults": {
+          "unit": "s"
+        },
         "overrides": []
       },
       "targets": [
@@ -47,10 +68,20 @@
       "id": 3,
       "title": "HTTP 5xx Error Rate",
       "type": "timeseries",
-      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 8},
-      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 8
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
       "fieldConfig": {
-        "defaults": {"unit": "percentunit"},
+        "defaults": {
+          "unit": "percentunit"
+        },
         "overrides": []
       },
       "targets": [
@@ -65,8 +96,16 @@
       "id": 4,
       "title": "Service Readiness",
       "type": "stat",
-      "gridPos": {"h": 8, "w": 6, "x": 12, "y": 8},
-      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "gridPos": {
+        "h": 8,
+        "w": 6,
+        "x": 12,
+        "y": 8
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
       "fieldConfig": {
         "defaults": {
           "min": 0,
@@ -75,8 +114,14 @@
             {
               "type": "value",
               "options": {
-                "0": {"text": "NOT READY", "color": "red"},
-                "1": {"text": "READY", "color": "green"}
+                "0": {
+                  "text": "NOT READY",
+                  "color": "red"
+                },
+                "1": {
+                  "text": "READY",
+                  "color": "green"
+                }
               }
             }
           ]
@@ -85,7 +130,7 @@
       },
       "targets": [
         {
-          "expr": "promiseops_readiness",
+          "expr": "promiseops_model_ready",
           "refId": "A"
         }
       ]
@@ -94,8 +139,16 @@
       "id": 5,
       "title": "Model Version",
       "type": "stat",
-      "gridPos": {"h": 8, "w": 6, "x": 18, "y": 8},
-      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "gridPos": {
+        "h": 8,
+        "w": 6,
+        "x": 18,
+        "y": 8
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
       "targets": [
         {
           "expr": "promiseops_model_info",
@@ -104,5 +157,17 @@
         }
       ]
     }
-  ]
+  ],
+  "templating": {
+    "list": [
+      {
+        "name": "DS_PROMETHEUS",
+        "label": "Prometheus datasource",
+        "type": "datasource",
+        "query": "prometheus",
+        "refresh": 1,
+        "hide": 0
+      }
+    ]
+  }
 }
