@@ -1,0 +1,6 @@
+replicaCount: 1
+hpa:
+  enabled: false
+priorityCronJob:
+  enabled: true
+  suspend: true             # run manually in staging: kubectl create job --from=cronjob/...

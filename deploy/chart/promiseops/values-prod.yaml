@@ -1,0 +1,9 @@
+replicaCount: 2
+hpa:
+  enabled: true
+  minReplicas: 2
+  maxReplicas: 3
+priorityCronJob:
+  enabled: true
+  # Suspended until batch scoring is integrated end to end (DB + model, MR !12 follow-up).
+  suspend: true
