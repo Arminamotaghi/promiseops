@@ -172,6 +172,7 @@ ORDER BY e.order_id;
 
 - `item_agg` و `pay_agg` هر دو از `eligible_orders` می‌خوانند؛ هیچ join بین این دو CTE قبل از aggregate انجام نمی‌شود.
 - `JOIN` نهایی با `item_agg` و `pay_agg` یک ردیف به ازای هر سفارش می‌دهد. اگر دادهٔ ناقص باشد و سفارشی item یا payment نداشته باشد، در خروجی نمی‌آید؛ قرارداد ingestion چنین سفارشی را از ابتدا رد می‌کند.
+- `INNER JOIN` برای `products`، `sellers` و `customers` عمدی است. DDL با FK و ingestion با بررسی FK و قرنطینه تضمین می‌کند ردیف یتیم وارد نشود. `LEFT JOIN` می‌تواند سفارش ناقص را با مقدار `NULL` بی‌صدا وارد feature کند و مشکل کیفیت داده را پنهان کند.
 - برای `labeled=True`، بعد از این کوئری یک `JOIN outcomes` روی `order_id` اضافه می‌شود، با شرط `outcomes.available_at <= :as_of`، و `late` با `is_late(delivered_at, promised_date)` محاسبه می‌شود. `delivered_at` و `available_at` هرگز به‌عنوان ستون feature برنمی‌گردند.
 - پیاده‌سازی می‌تواند بخشی از محاسبات تاریخ را در Python انجام دهد؛ اما شرط‌های زمانی و aggregation باید همین semantics را داشته باشند.
 
