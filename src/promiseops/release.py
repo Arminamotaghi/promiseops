@@ -23,7 +23,13 @@ import sklearn
 from sklearn.dummy import DummyClassifier
 from sklearn.pipeline import Pipeline
 
-from promiseops.features import FEATURE_CONTRACT_SHA256, FEATURES, is_late
+from promiseops.features import (
+    CATEGORICAL_FEATURES,
+    FEATURE_CONTRACT_SHA256,
+    FEATURES,
+    NUMERIC_FEATURES,
+    is_late,
+)
 
 RELEASE_SCHEMA_VERSION = "1.0"
 DEFAULT_MODEL_FILE = "model.joblib"
@@ -206,6 +212,12 @@ def _positive_probability(model: object, sample: pd.DataFrame) -> float:
     return probability
 
 
+def _validation_sample() -> pd.DataFrame:
+    row = {name: 0.0 for name in NUMERIC_FEATURES}
+    row.update({name: "unknown" for name in CATEGORICAL_FEATURES})
+    return pd.DataFrame([row], columns=list(FEATURES))
+
+
 def load_bundle(bundle_dir: Path | str = "release") -> ReleaseBundle:
     """Load a bundle and enforce every startup check from the release contract."""
     bundle_dir = Path(bundle_dir)
@@ -245,8 +257,7 @@ def load_bundle(bundle_dir: Path | str = "release") -> ReleaseBundle:
     except Exception as exc:
         raise BundleError("model file cannot be loaded") from exc
 
-    sample = pd.DataFrame([{name: 0.0 for name in FEATURES}])
-    _positive_probability(model, sample)
+    _positive_probability(model, _validation_sample())
     return ReleaseBundle(path=bundle_dir, metadata=metadata, model=model)
 
 

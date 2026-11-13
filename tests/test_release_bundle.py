@@ -1,12 +1,22 @@
 import json
 from pathlib import Path
 
+import joblib
 import pandas as pd
 import pytest
 import sklearn
+from sklearn.compose import ColumnTransformer
+from sklearn.linear_model import LogisticRegression
+from sklearn.pipeline import Pipeline
+from sklearn.preprocessing import OneHotEncoder, StandardScaler
 
 from promiseops.cli import main
-from promiseops.features import FEATURE_CONTRACT_SHA256, FEATURES
+from promiseops.features import (
+    CATEGORICAL_FEATURES,
+    FEATURE_CONTRACT_SHA256,
+    FEATURES,
+    NUMERIC_FEATURES,
+)
 from promiseops.release import (
     BundleError,
     build_baseline_bundle,
@@ -40,6 +50,53 @@ def test_make_baseline_bundle_passes_startup_checks(tmp_path):
     bundle = load_bundle(bundle_dir)
     assert bundle.metadata == metadata
     assert bundle.path == bundle_dir
+
+
+def _real_encoder_pipeline() -> Pipeline:
+    rows = []
+    for index in range(4):
+        row = {name: float(index + 1) for name in NUMERIC_FEATURES}
+        row.update(
+            {
+                name: "SP" if index % 2 == 0 else "RJ"
+                for name in CATEGORICAL_FEATURES
+            }
+        )
+        rows.append(row)
+
+    x_train = pd.DataFrame(rows, columns=list(FEATURES))
+    y_train = [0, 1, 0, 1]
+    preprocess = ColumnTransformer(
+        [
+            ("numeric", StandardScaler(), list(NUMERIC_FEATURES)),
+            (
+                "categorical",
+                OneHotEncoder(handle_unknown="ignore"),
+                list(CATEGORICAL_FEATURES),
+            ),
+        ]
+    )
+    model = Pipeline(
+        [
+            ("preprocess", preprocess),
+            ("model", LogisticRegression()),
+        ]
+    )
+    model.fit(x_train, y_train)
+    return model
+
+
+def test_load_bundle_accepts_a_real_encoder_pipeline(tmp_path):
+    bundle_dir, metadata = _build(tmp_path)
+    joblib.dump(_real_encoder_pipeline(), bundle_dir / "model.joblib")
+    model_sha256 = sha256_file(bundle_dir / "model.joblib")
+    metadata["model_sha256"] = model_sha256
+    metadata["model_version"] = f"late-risk-test.v0.{model_sha256[:8]}"
+    (bundle_dir / "release.json").write_text(json.dumps(metadata))
+
+    bundle = load_bundle(bundle_dir)
+
+    assert bundle.model is not None
 
 
 def test_baseline_probability_is_fixture_prevalence_in_unit_interval(tmp_path):
