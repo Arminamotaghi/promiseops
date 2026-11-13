@@ -1,0 +1,6 @@
+apiVersion: v2
+name: promiseops
+description: PromiseOps late-delivery risk API and batch priority scoring (group g07)
+type: application
+version: 0.1.0
+appVersion: "0.1.0"

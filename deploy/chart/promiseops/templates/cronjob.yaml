@@ -1,0 +1,65 @@
+{{- if .Values.priorityCronJob.enabled }}
+{{- $cron := .Values.priorityCronJob }}
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: {{ include "promiseops.fullname" . }}-priority
+  labels:
+    {{- include "promiseops.labels" . | nindent 4 }}
+    app.kubernetes.io/component: priority
+spec:
+  schedule: {{ $cron.schedule | quote }}
+  suspend: {{ $cron.suspend }}
+  concurrencyPolicy: Forbid
+  startingDeadlineSeconds: {{ $cron.startingDeadlineSeconds }}
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    metadata:
+      labels:
+        {{- include "promiseops.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: priority
+    spec:
+      backoffLimit: 1
+      activeDeadlineSeconds: {{ $cron.activeDeadlineSeconds }}
+      ttlSecondsAfterFinished: 86400
+      template:
+        metadata:
+          labels:
+            {{- include "promiseops.selectorLabels" . | nindent 12 }}
+            app.kubernetes.io/component: priority
+        spec:
+          restartPolicy: Never
+          {{- with .Values.serviceAccountName }}
+          serviceAccountName: {{ . }}
+          {{- end }}
+          automountServiceAccountToken: false
+          {{- with .Values.imagePullSecrets }}
+          imagePullSecrets:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          securityContext:
+            {{- include "promiseops.podSecurityContext" . | nindent 12 }}
+          containers:
+            - name: priority
+              image: {{ include "promiseops.image" . | quote }}
+              imagePullPolicy: {{ .Values.image.pullPolicy }}
+              command: ["promiseops"]
+              args:
+                {{- toYaml $cron.args | nindent 16 }}
+              env:
+                {{- include "promiseops.env" . | nindent 16 }}
+              envFrom:
+                {{- include "promiseops.envFrom" . | nindent 16 }}
+              resources:
+                {{- toYaml $cron.resources | nindent 16 }}
+              securityContext:
+                {{- include "promiseops.containerSecurityContext" . | nindent 16 }}
+              volumeMounts:
+                - name: tmp
+                  mountPath: /tmp
+          volumes:
+            - name: tmp
+              emptyDir:
+                sizeLimit: 256Mi
+{{- end }}
