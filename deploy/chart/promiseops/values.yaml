@@ -9,7 +9,7 @@ image:
   pullPolicy: IfNotPresent
 
 # --- provided by staff in the staging and prod namespaces ---
-serviceAccountName: ""      # empty = namespace default; set if staff requires their runtime account
+serviceAccountName: ""      # empty = namespace default (staff: no dedicated account is needed)
 imagePullSecrets:
   - name: registry-pull
 runtimeSecretName: ""       # CI passes runtime-config (database URL and API key)
@@ -31,7 +31,7 @@ resources:
 
 service:
   port: 80
-  annotations: {}           # TODO(staff): Prometheus scrape annotations if scraping works that way
+  annotations: {}           # scraping needs none: the platform Service promiseops-metrics selects the pods
 
 podAnnotations: {}
 
