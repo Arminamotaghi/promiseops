@@ -14,14 +14,15 @@ variables:
   HELM_RELEASE: promiseops
   # Only this GitLab user may run production deploy / rollback (change only through a reviewed MR).
   PROD_APPROVER: qbc13-g07-03
-  # TODO(staff): name of the staff-provided runtime secret (DB URL + API key) in staging/prod.
-  RUNTIME_SECRET_NAME: TODO-runtime-secret
+  # Staff-provided secret in staging/prod with the runtime configuration (DB URL, API key).
+  RUNTIME_SECRET_NAME: runtime-config
   # TODO(data): one released order ID used by the smoke test (not a secret).
   SMOKE_ORDER_ID: TODO-order-id
   # Staging deploys are manual until the runtime secret name is known and the image carries a
   # model bundle (otherwise /readyz is 503 and every main pipeline would fail). Then set "true".
   STAGING_AUTO_DEPLOY: "false"
-  # PROMISEOPS_API_KEY must be a masked + protected CI/CD variable (set by a Maintainer), never in this file.
+  # The live check reads PROMISEOPS_API_KEY from the runtime secret of the namespace it tests.
+  # It is not a CI/CD variable and is never printed.
 
 default:
   image: $CI_TOOLBOX_IMAGE
@@ -60,14 +61,16 @@ default:
         echo "Production changes must be started by $PROD_APPROVER (started by $GITLAB_USER_LOGIN)."; exit 1
       fi
 
-# Needs NAMESPACE set. Port-forward keeps the Service ClusterIP-only.
-# TODO(staff): confirm the CI identity may use pods/portforward in staging/prod.
+# Needs NAMESPACE set. The CI identity may not port-forward, so the check calls the Service
+# through its cluster address. The API key comes from the runtime secret and is never printed.
 .smoke-test:
   script:
     - kubectl -n "$NAMESPACE" rollout status "deployment/$HELM_RELEASE" --timeout=180s
-    - kubectl -n "$NAMESPACE" port-forward "service/$HELM_RELEASE" 18080:80 > port-forward.log 2>&1 &
-    - sleep 5
-    - .venv/bin/python acceptance/live_api.py --url http://127.0.0.1:18080 --order-id "$SMOKE_ORDER_ID"
+    - |
+      PROMISEOPS_API_KEY="$(kubectl -n "$NAMESPACE" get secret "$RUNTIME_SECRET_NAME" -o jsonpath='{.data.PROMISEOPS_API_KEY}' | base64 -d)"
+      test -n "$PROMISEOPS_API_KEY"
+      export PROMISEOPS_API_KEY
+    - .venv/bin/python acceptance/live_api.py --url "http://$HELM_RELEASE.$NAMESPACE.svc.cluster.local" --order-id "$SMOKE_ORDER_ID"
 
 # ---------- test ----------
 contracts:
@@ -81,9 +84,8 @@ contracts:
 chart-lint:
   stage: test
   extends: .not-rollback
-  allow_failure: true  # TODO: set to false once helm is confirmed in the toolbox image
   script:
-    - helm version  # TODO(staff): confirm helm is available in $CI_TOOLBOX_IMAGE
+    - helm version
     - |
       for env in staging prod; do
         helm lint "$CHART_DIR" -f "$CHART_DIR/values-$env.yaml" \
@@ -108,7 +110,7 @@ build-own-image:
     - cp -a /opt/promiseops/wheelhouse ./wheelhouse
     - mkdir -p "$HOME/.docker"
     - python ci/registry_login.py
-    - buildctl --addr "$BUILDKIT_ADDR" --tlsservername "$BUILDKIT_SERVER_NAME" --tlscacert "$BUILDKIT_CA" --tlscert "$BUILDKIT_CERT" --tlskey "$BUILDKIT_KEY" build --frontend dockerfile.v0 --local context=. --local dockerfile=. --opt build-arg:BASE_IMAGE="$BASE_IMAGE" --opt build-arg:UV_IMAGE="$UV_IMAGE" --output type=image,name="$CI_REGISTRY_IMAGE/app:$CI_COMMIT_SHA",push=true --metadata-file build.json
+    - buildctl --addr "$BUILDKIT_ADDR" --tlsservername "$BUILDKIT_SERVER_NAME" --tlscacert "$BUILDKIT_CA" --tlscert "$BUILDKIT_CERT" --tlskey "$BUILDKIT_KEY" build --frontend dockerfile.v0 --local context=. --local dockerfile=. --opt build-arg:BASE_IMAGE="$BASE_IMAGE" --opt build-arg:UV_IMAGE="$UV_IMAGE" --opt build-arg:SOURCE_COMMIT="$CI_COMMIT_SHA" --output type=image,name="$CI_REGISTRY_IMAGE/app:$CI_COMMIT_SHA",push=true --metadata-file build.json
     - python -c 'import json; assert json.load(open("build.json"))["containerimage.digest"].startswith("sha256:")'
   artifacts:
     paths: [build.json]
@@ -224,5 +226,36 @@ inspect-own-namespaces:
   script:
     - for area in staging prod; do kubectl get pods,deployments,jobs,cronjobs,hpa -n "$TEAM-$area"; helm list -n "$TEAM-$area" || true; done
     # Names only (never values): tells us which runtime/pull secrets and service accounts exist.
-    - for area in staging prod; do kubectl get secrets,serviceaccounts -n "$TEAM-$area" -o name || true; done
+    - for area in staging prod; do kubectl get secrets -n "$TEAM-$area" -o name || true; done
+    # Key names and sizes only (describe never prints secret values).
+    - kubectl describe secret "$RUNTIME_SECRET_NAME" -n "$TEAM-staging" || true
+    # The platform's scrape target in prod: its selector and port must match the API pods.
+    - kubectl describe service promiseops-metrics -n "$TEAM-prod" || true
     - kubectl get pods,jobs -n "$TEAM-jobs"
+
+# Manual and read-only: can this runner reach the team's MLflow? Prints the HTTP status only.
+probe-mlflow:
+  needs: []
+  stage: build
+  rules:
+    - if: '$CI_COMMIT_REF_PROTECTED == "true"'
+      when: manual
+  allow_failure: true
+  script:
+    - |
+      MLFLOW_TRACKING_URI="$(kubectl -n "$TEAM-staging" get secret "$RUNTIME_SECRET_NAME" -o jsonpath='{.data.MLFLOW_TRACKING_URI}' | base64 -d)"
+      test -n "$MLFLOW_TRACKING_URI"
+      export MLFLOW_TRACKING_URI
+    - |
+      python - <<'PY'
+      import os, sys, urllib.error, urllib.request
+      try:
+          url = os.environ["MLFLOW_TRACKING_URI"].rstrip("/") + "/health"
+          with urllib.request.urlopen(url, timeout=15) as response:
+              print("MLflow /health -> HTTP", response.status)
+      except urllib.error.HTTPError as exc:
+          print("MLflow is reachable but /health answered HTTP", exc.code)
+      except Exception as exc:
+          print("MLflow is not reachable from this runner:", type(exc).__name__)
+          sys.exit(1)
+      PY

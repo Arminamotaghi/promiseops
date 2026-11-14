@@ -8,10 +8,11 @@ image:
   digest: ""                # CI: sha256:... from build.json
   pullPolicy: IfNotPresent
 
-# --- provided by staff (names still to confirm; see docs/design/release.md) ---
-serviceAccountName: ""      # TODO(staff): runtime service account, empty = namespace default
-imagePullSecrets: []        # TODO(staff): e.g. [{name: <registry-pull-secret>}]
-runtimeSecretName: ""       # TODO(staff): secret holding PROMISEOPS_DATABASE_URL and PROMISEOPS_API_KEY
+# --- provided by staff in the staging and prod namespaces ---
+serviceAccountName: ""      # empty = namespace default (staff: no dedicated account is needed)
+imagePullSecrets:
+  - name: registry-pull
+runtimeSecretName: ""       # CI passes runtime-config (database URL and API key)
 
 env:                        # non-secret settings only
   PROMISEOPS_RELEASE_DIR: /opt/promiseops/release
@@ -30,7 +31,7 @@ resources:
 
 service:
   port: 80
-  annotations: {}           # TODO(staff): Prometheus scrape annotations if scraping works that way
+  annotations: {}           # scraping needs none: the platform Service promiseops-metrics selects the pods
 
 podAnnotations: {}
 

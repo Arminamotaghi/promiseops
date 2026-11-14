@@ -31,7 +31,9 @@ rollback: rollback-prod (دستی؛ با ROLLBACK_DIGEST)
 
 - buildها و deployها فقط روی branch محافظت‌شده (main) اجرا می‌شوند. روی branchهای کاری فقط تست.
 - تا وقتی اسم secret معلوم نشده و image مدل baseline ندارد، `deploy-staging` و `verify-staging` **دستی‌اند** (`STAGING_AUTO_DEPLOY: "false"`)؛ وگرنه هر pipeline روی main قرمز می‌شد. بعد از آماده شدن، مقدار را `"true"` کنید.
-- job دستی `inspect-own-namespaces` اسم secretها و service accountهای staging و prod را نشان می‌دهد (فقط اسم، نه مقدار).
+- job دستی `inspect-own-namespaces` اسم secretها و مشخصات Service ‏`promiseops-metrics` را نشان می‌دهد (فقط اسم، نه مقدار).
+- job دستی `probe-mlflow` بررسی می‌کند runner به MLflow گروه می‌رسد یا نه؛ فقط وضعیت HTTP را چاپ می‌کند.
+- تست زنده (`verify-staging`، `deploy-prod`، `rollback-prod`) سرویس را با آدرس داخلی کلاستر صدا می‌زند (`http://promiseops.<namespace>.svc.cluster.local`) و کلید API را از secret همان namespace می‌خواند. port-forward برای CI مجاز نیست.
 - `--atomic`: اگر rollout در زمان مشخص ready نشود، Helm خودکار به revision قبلی برمی‌گردد. این همان «بازیابی خودکار rollout خراب» است.
 - `deploy-prod` اگر job امتیازدهی در حال اجرا باشد صبر می‌کند (جا برای pod اضافه).
 - هر deploy یک فایل شاهد می‌سازد: digest، commit، شروع‌کننده، لینک pipeline و زمان (`ci/record_deploy.py`).
@@ -60,20 +62,34 @@ python acceptance/load.py --url ... --rps 30 --seconds 240 --order-ids ids.json 
 # replicas: 2 → 3 ؛ بعد از پایان بار و ~۲ دقیقه: 3 → 2
 ```
 
-## منتظر جواب تیم آموزشی
+## مقدارهای محیط (جواب تیم آموزشی و job ‏`inspect-own-namespaces`)
+
+| مورد | مقدار |
+|---|---|
+| secret runtime | `runtime-config`؛ کلیدهای `PROMISEOPS_API_KEY` و `MLFLOW_TRACKING_URI` و آدرس دیتابیس |
+| secret pull برای registry | `registry-pull` |
+| service account | لازم نیست؛ `serviceAccountName` خالی و `automountServiceAccountToken: false` |
+| helm در image ابزار CI | هست؛ `chart-lint` اجباری است |
+| اجازه‌های CI در staging | deploy، خواندن secret، ساختن Job و خواندن log؛ port-forward ندارد |
+| scrape | job ‏`g07-production` هر ۱۵ ثانیه `promiseops-metrics.g07-prod.svc.cluster.local:8080/metrics`؛ فقط prod |
+| Service ‏`promiseops-metrics` | پلتفرم در prod ساخته (headless، selector ‏`app: promiseops`، پورت 8080). chart آن را **نمی‌سازد**؛ فقط podهای API برچسب `app: promiseops` دارند |
+| کلید `/metrics` | Prometheus هدر `X-API-Key` را خودش می‌فرستد؛ سرویس همان کلید runtime را قبول می‌کند |
+
+بررسی scrape: در Grafana ← Explore عبارت `up{job="g07-production"}` برای هر replica باید 1 باشد.
+
+## هنوز باز
 
 | مورد | کجا عوض شود |
 |---|---|
-| نام secret runtime (DB URL و API key) | `RUNTIME_SECRET_NAME` در `.gitlab-ci.yml` |
-| secret pull و service account | `values.yaml` |
-| helm در image ابزار CI هست؟ | `chart-lint` (فعلاً `allow_failure`) |
-| اجازهٔ port-forward برای CI | `.smoke-test` |
-| روش scrape شدن Prometheus | `service.annotations` یا `podAnnotations` |
-| `PROMISEOPS_API_KEY` به‌صورت متغیر masked و protected | تنظیمات CI (Maintainer) |
-| چرا pipeline branchها `stuck` است | runner |
+| رسیدن runner به Service داخلی staging و prod (اگر نرسید: Job کوتاه در همان namespace و خواندن log) | `.smoke-test` |
+| رسیدن runner به MLflow | job ‏`probe-mlflow` |
+| `SMOKE_ORDER_ID`: یک order_id منتشرشده | `.gitlab-ci.yml` بعد از اولین ingestion |
+
+## مدل داخل image
+
+Dockerfile هنگام build دستور `promiseops make-baseline` را اجرا می‌کند و bundle راه‌انداز را در `/opt/promiseops/release` می‌گذارد (با همان Python و scikit-learn خود image). bundle راه‌انداز فقط برای آزمودن مسیر است و به production نمی‌رود؛ با آماده شدن مدل آموزش‌دیده، bundle تأییدشده جای آن را می‌گیرد (`docs/design/release.md`).
 
 ## وابستگی به بقیه
 
 - deploy واقعی روی staging وقتی موفق می‌شود که API حداقل `/healthz` و `/readyz` داشته باشد (اولین MR آرمینا).
 - `SMOKE_ORDER_ID`: یک order_id منتشرشده، بعد از اولین ingestion (محمدرضا).
-- قرار دادن bundle مدل در image: MR جدا بعد از قرارداد release.
