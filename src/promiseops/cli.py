@@ -9,7 +9,8 @@ from pathlib import Path
 
 from promiseops.contracts import instant
 from promiseops.release import build_baseline_bundle
-from promiseops.data import ingest_batch 
+import psycopg
+from promiseops.data import ingest_batch
 
 
 def main(argv: list[str] | None = None) -> int | None:
@@ -82,27 +83,39 @@ def main(argv: list[str] | None = None) -> int | None:
     # --- ADDED FOR INGEST: Command Handling ---
     if args.command == "ingest":
         try:
-            # 1. Validate --as-of format
-            instant(args.as_of)
+            as_of = instant(args.as_of)
         except (TypeError, ValueError) as exc:
             print(f"error: invalid --as-of format: {exc}", file=sys.stderr)
             return 1
 
-        # 2. Validate file existence
         if not os.path.isfile(args.file):
             print(f"error: payload file not found: {args.file}", file=sys.stderr)
             return 1
 
-        # 3. Execute ingestion
-        res = ingest_batch(
-            file_path=args.file,
-            as_of_str=args.as_of,
-            expected_sha256=args.expected_sha256,
-        )
-        
-        # 4. Output result and exit code
+        database_url = os.environ.get("PROMISEOPS_DATABASE_URL")
+        if not database_url:
+            print(
+                "error: PROMISEOPS_DATABASE_URL is not configured",
+                file=sys.stderr,
+            )
+            return 1
+
+        payload = Path(args.file).read_bytes()
+
+        with psycopg.connect(database_url) as connection:
+            res = ingest_batch(
+                connection,
+                payload,
+                as_of=as_of,
+                expected_sha256=args.expected_sha256,
+            )
+
         print(json.dumps(res, ensure_ascii=False, indent=2))
-        return 0 if res.get("status") in ("success", "replayed") else 1
+        return 0 if res.get("status") in (
+            "accepted",
+            "success",
+            "replayed",
+        ) else 1
     # ------------------------------------------
 
     return None

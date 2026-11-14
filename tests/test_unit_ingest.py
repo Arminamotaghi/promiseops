@@ -8,6 +8,7 @@ from datetime import datetime, timezone
 from promiseops.contracts import digest
 from zoneinfo import ZoneInfo
 from promiseops.data import ingest_batch
+from promiseops import cli
 
 
 class FakeCursor:
@@ -319,3 +320,66 @@ def test_cutoff_comparison_with_sao_paulo_timezone():
     )
     assert res["status"] == "accepted"
     assert res["replayed"] is False
+
+
+def test_cli_ingest_accepted_exit_zero(tmp_path, monkeypatch):
+    payload_bytes = b'{"batch_id": "b1"}'
+    payload_file = tmp_path / "batch.json"
+    payload_file.write_bytes(payload_bytes)
+
+    captured = {}
+
+    class FakeConnection:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+    def fake_connect(database_url):
+        captured["database_url"] = database_url
+        return FakeConnection()
+
+    def fake_ingest(
+        connection,
+        payload,
+        *,
+        as_of,
+        expected_sha256,
+    ):
+        captured["connection"] = connection
+        captured["payload"] = payload
+        captured["as_of"] = as_of
+        captured["expected_sha256"] = expected_sha256
+
+        return {
+            "batch_id": "b1",
+            "status": "accepted",
+            "replayed": False,
+        }
+
+    monkeypatch.setenv(
+        "PROMISEOPS_DATABASE_URL",
+        "postgresql://test:test@localhost/test",
+    )
+    monkeypatch.setattr(cli.psycopg, "connect", fake_connect)
+    monkeypatch.setattr(cli, "ingest_batch", fake_ingest)
+
+    result = cli.main(
+        [
+            "ingest",
+            "--file",
+            str(payload_file),
+            "--as-of",
+            "2023-06-01T00:00:00Z",
+            "--expected-sha256",
+            "test-sha256",
+        ]
+    )
+
+    assert result == 0
+    assert captured["payload"] == payload_bytes
+    assert captured["database_url"] == (
+        "postgresql://test:test@localhost/test"
+    )
+    assert captured["expected_sha256"] == "test-sha256"
