@@ -169,3 +169,32 @@ def test_score_priority_requires_database_url_when_as_of_missing(
     assert exc.value.code == 2
     output = capsys.readouterr()
     assert "PROMISEOPS_DATABASE_URL is required" in output.err
+
+
+def test_latest_released_at_uses_psycopg_driver(monkeypatch):
+    from datetime import datetime
+    from unittest.mock import MagicMock
+
+    from promiseops import cli
+
+    monkeypatch.setenv(
+        "PROMISEOPS_DATABASE_URL",
+        "postgresql://user:pass@localhost:5432/promiseops",
+    )
+
+    expected = datetime(2018, 1, 1, tzinfo=UTC)
+
+    engine = MagicMock()
+    connection = engine.connect.return_value.__enter__.return_value
+    connection.execute.return_value.scalar_one.return_value = expected
+
+    create_engine = MagicMock(return_value=engine)
+    monkeypatch.setattr(cli, "create_engine", create_engine)
+
+    result = cli.latest_released_at()
+
+    assert result == expected
+    create_engine.assert_called_once_with(
+        "postgresql+psycopg://user:pass@localhost:5432/promiseops"
+    )
+    engine.dispose.assert_called_once()

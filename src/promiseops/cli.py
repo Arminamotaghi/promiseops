@@ -1,13 +1,16 @@
 """Command-line interface for PromiseOps."""
 
 import argparse
+import json
 import os
 import sys
+from pathlib import Path
 
 from sqlalchemy import create_engine, text
 from sqlalchemy.exc import SQLAlchemyError
 
 from promiseops.contracts import instant
+from promiseops.release import build_baseline_bundle
 
 
 def latest_released_at():
@@ -19,6 +22,11 @@ def latest_released_at():
         )
 
     try:
+        if database_url.startswith("postgresql://"):
+            database_url = (
+                "postgresql+psycopg://"
+                + database_url[len("postgresql://"):]
+            )
         engine = create_engine(database_url)
         try:
             with engine.connect() as connection:
@@ -38,7 +46,7 @@ def latest_released_at():
     return instant(value.isoformat())
 
 
-def main():
+def main(argv: list[str] | None = None) -> int | None:
     parser = argparse.ArgumentParser(prog="promiseops")
     commands = parser.add_subparsers(dest="command", required=True)
 
@@ -52,7 +60,14 @@ def main():
         help="Timezone-aware scoring cutoff, for example 2018-01-01T00:00:00Z",
     )
 
-    args = parser.parse_args()
+    baseline = commands.add_parser(
+        "make-baseline",
+        help="Build the bootstrap release bundle from synthetic fixtures",
+    )
+    baseline.add_argument("--out", type=Path, default=Path("release"))
+    baseline.add_argument("--fixtures", type=Path, default=Path("fixtures"))
+
+    args = parser.parse_args(argv)
 
     if args.command == "score-priority":
         try:
@@ -60,6 +75,7 @@ def main():
                 instant(args.as_of)
                 if args.as_of is not None
                 else latest_released_at()
+
             )
         except (TypeError, ValueError) as exc:
             if args.as_of is not None:
@@ -72,6 +88,12 @@ def main():
             file=sys.stderr,
         )
         return 1
+
+    if args.command == "make-baseline":
+        metadata = build_baseline_bundle(args.out, fixtures_dir=args.fixtures)
+        print(json.dumps(metadata, indent=2, sort_keys=True))
+
+    return None
 
 
 if __name__ == "__main__":
