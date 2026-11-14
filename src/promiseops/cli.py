@@ -4,13 +4,48 @@ import argparse
 import json
 import os
 import sys
-from datetime import UTC, datetime
 from pathlib import Path
+
+from sqlalchemy import create_engine, text
+from sqlalchemy.exc import SQLAlchemyError
 
 from promiseops.contracts import instant
 from promiseops.release import build_baseline_bundle
 import psycopg
 from promiseops.data import ingest_batch
+
+
+def latest_released_at():
+    """Get the latest order release timestamp for replay scoring."""
+    database_url = os.environ.get("PROMISEOPS_DATABASE_URL")
+    if not database_url:
+        raise ValueError(
+            "PROMISEOPS_DATABASE_URL is required when --as-of is omitted"
+        )
+
+    try:
+        if database_url.startswith("postgresql://"):
+            database_url = (
+                "postgresql+psycopg://"
+                + database_url[len("postgresql://"):]
+            )
+        engine = create_engine(database_url)
+        try:
+            with engine.connect() as connection:
+                value = connection.execute(
+                    text("SELECT MAX(released_at) FROM orders")
+                ).scalar_one()
+        finally:
+            engine.dispose()
+    except SQLAlchemyError as exc:
+        raise ValueError(
+            "Cannot read latest released_at from orders database"
+        ) from exc
+
+    if value is None:
+        raise ValueError("No orders found in database")
+
+    return instant(value.isoformat())
 
 
 def main(argv: list[str] | None = None) -> int | None:
@@ -63,10 +98,13 @@ def main(argv: list[str] | None = None) -> int | None:
             as_of = (
                 instant(args.as_of)
                 if args.as_of is not None
-                else datetime.now(UTC)
+                else latest_released_at()
+
             )
         except (TypeError, ValueError) as exc:
-            parser.error(f"invalid --as-of: {exc}")
+            if args.as_of is not None:
+                parser.error(f"invalid --as-of: {exc}")
+            parser.error(str(exc))
 
         print(
             "Priority scoring is not available: database and model integration "
