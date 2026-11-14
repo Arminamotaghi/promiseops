@@ -1,0 +1,75 @@
+# Defaults shared by every environment. values-staging.yaml / values-prod.yaml override them.
+# CI always sets image.repository and image.digest; a mutable tag is never deployed.
+
+nameOverride: ""
+
+image:
+  repository: ""            # CI: $CI_REGISTRY_IMAGE/app
+  digest: ""                # CI: sha256:... from build.json
+  pullPolicy: IfNotPresent
+
+# --- provided by staff (names still to confirm; see docs/design/release.md) ---
+serviceAccountName: ""      # TODO(staff): runtime service account, empty = namespace default
+imagePullSecrets: []        # TODO(staff): e.g. [{name: <registry-pull-secret>}]
+runtimeSecretName: ""       # TODO(staff): secret holding PROMISEOPS_DATABASE_URL and PROMISEOPS_API_KEY
+
+env:                        # non-secret settings only
+  PROMISEOPS_RELEASE_DIR: /opt/promiseops/release
+  PROMISEOPS_LOG_FORMAT: json
+
+replicaCount: 1
+
+# prod budget is 3 CPU / 3 GiB: 3 replicas + 1 surge pod at 750m / 768Mi fit exactly.
+resources:
+  requests:
+    cpu: 250m
+    memory: 384Mi
+  limits:
+    cpu: 750m
+    memory: 768Mi
+
+service:
+  port: 80
+  annotations: {}           # TODO(staff): Prometheus scrape annotations if scraping works that way
+
+podAnnotations: {}
+
+probes:
+  readiness:                # /readyz: validated model AND reachable DB
+    periodSeconds: 5
+    timeoutSeconds: 2
+    failureThreshold: 3
+  liveness:                 # /healthz: process alive only
+    periodSeconds: 10
+    timeoutSeconds: 2
+    failureThreshold: 3
+  startup:
+    periodSeconds: 2
+    failureThreshold: 30    # up to 60 s to load the model bundle
+
+shutdown:
+  preStopSeconds: 10        # drain before SIGTERM
+  terminationGracePeriodSeconds: 45
+
+hpa:
+  enabled: false
+  minReplicas: 2
+  maxReplicas: 3
+  targetCPUUtilizationPercentage: 70
+  scaleUpStabilizationSeconds: 0
+  scaleDownStabilizationSeconds: 120
+
+priorityCronJob:
+  enabled: false
+  schedule: "15 * * * *"
+  suspend: false
+  startingDeadlineSeconds: 300
+  activeDeadlineSeconds: 900
+  args: ["score-priority"]  # promiseops CLI subcommand (owner: Armina)
+  resources:
+    requests:
+      cpu: 250m
+      memory: 384Mi
+    limits:
+      cpu: 750m
+      memory: 768Mi

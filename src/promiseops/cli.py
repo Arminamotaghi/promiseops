@@ -1,19 +1,21 @@
 """Command-line interface for PromiseOps."""
 
 import argparse
-from datetime import datetime, timezone
 import json
 import os
 import sys
+from datetime import UTC, datetime
+from pathlib import Path
 
 from promiseops.contracts import instant
+from promiseops.release import build_baseline_bundle
+from promiseops.data import ingest_batch 
 
 
-def main():
+def main(argv: list[str] | None = None) -> int | None:
     parser = argparse.ArgumentParser(prog="promiseops")
     commands = parser.add_subparsers(dest="command", required=True)
 
-    # 1. Subcommand: score-priority (existing, untouched)
     priority_parser = commands.add_parser(
         "score-priority",
         help="Score a cohort and select the highest-risk 10% of orders",
@@ -24,36 +26,43 @@ def main():
         help="Timezone-aware scoring cutoff, for example 2018-01-01T00:00:00Z",
     )
 
-    # 2. Subcommand: ingest (new, transactional & idempotent batch ingestion)
+    baseline = commands.add_parser(
+        "make-baseline",
+        help="Build the bootstrap release bundle from synthetic fixtures",
+    )
+    baseline.add_argument("--out", type=Path, default=Path("release"))
+    baseline.add_argument("--fixtures", type=Path, default=Path("fixtures"))
+
+    # --- ADDED FOR INGEST: Subcommand Definition ---
     ingest_parser = commands.add_parser(
         "ingest",
-        help="Ingest a JSON batch payload with idempotent transactional guarantees",
+        help="Ingest order batch payload into database",
     )
     ingest_parser.add_argument(
         "--file",
         required=True,
-        help="Path to the JSON batch payload file",
+        help="Path to JSON payload file",
     )
     ingest_parser.add_argument(
         "--as-of",
         required=True,
-        help="Timezone-aware cutoff timestamp for the feed, e.g., 2018-01-01T00:00:00Z",
+        help="Ingestion timestamp ISO-8601 (e.g. 2026-03-31T23:59:59)",
     )
     ingest_parser.add_argument(
         "--expected-sha256",
         required=True,
         help="Expected SHA-256 checksum of the payload file",
     )
+    # -----------------------------------------------
 
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
 
-    # --- Handling: score-priority ---
     if args.command == "score-priority":
         try:
             as_of = (
                 instant(args.as_of)
                 if args.as_of is not None
-                else datetime.now(timezone.utc)
+                else datetime.now(UTC)
             )
         except (TypeError, ValueError) as exc:
             parser.error(f"invalid --as-of: {exc}")
@@ -65,11 +74,16 @@ def main():
         )
         return 1
 
-    # --- Handling: ingest ---
-    elif args.command == "ingest":
-        # 1. Validate and parse --as-of
+    if args.command == "make-baseline":
+        metadata = build_baseline_bundle(args.out, fixtures_dir=args.fixtures)
+        print(json.dumps(metadata, indent=2, sort_keys=True))
+        return 0 # اضافه شد برای اطمینان از خروج موفق
+
+    # --- ADDED FOR INGEST: Command Handling ---
+    if args.command == "ingest":
         try:
-            as_of_dt = instant(args.as_of)
+            # 1. Validate --as-of format
+            instant(args.as_of)
         except (TypeError, ValueError) as exc:
             print(f"error: invalid --as-of format: {exc}", file=sys.stderr)
             return 1
@@ -79,55 +93,19 @@ def main():
             print(f"error: payload file not found: {args.file}", file=sys.stderr)
             return 1
 
-        # 3. Read payload bytes
-        try:
-            with open(args.file, "rb") as f:
-                payload_bytes = f.read()
-        except OSError as exc:
-            print(f"error: failed to read file {args.file}: {exc}", file=sys.stderr)
-            return 1
+        # 3. Execute ingestion
+        res = ingest_batch(
+            file_path=args.file,
+            as_of_str=args.as_of,
+            expected_sha256=args.expected_sha256,
+        )
+        
+        # 4. Output result and exit code
+        print(json.dumps(res, ensure_ascii=False, indent=2))
+        return 0 if res.get("status") in ("success", "replayed") else 1
+    # ------------------------------------------
 
-        # 4. Check database connection string from environment
-        database_url = os.environ.get("PROMISEOPS_DATABASE_URL")
-        if not database_url:
-            print(
-                "error: PROMISEOPS_DATABASE_URL environment variable is not set.",
-                file=sys.stderr,
-            )
-            return 1
-
-        # 5. Lazy import of database driver and ingestion engine to protect score-priority
-        try:
-            import psycopg
-            from promiseops.data import ingest_batch
-        except ImportError as exc:
-            print(
-                f"error: required module/driver could not be imported: {exc}",
-                file=sys.stderr,
-            )
-            return 1
-
-        # 6. Execute transactional ingest
-        try:
-            with psycopg.connect(database_url) as connection:
-                result = ingest_batch(
-                    connection,
-                    payload_bytes,
-                    as_of=as_of_dt,
-                    expected_sha256=args.expected_sha256,
-                )
-                # Successful ingestion receipt output on stdout
-                print(json.dumps(result, indent=2))
-                return 0
-        except ValueError as exc:
-            # Domain/validation errors raised by engine (already quarantined internally)
-            reason_code = str(exc)
-            print(f"ingest rejected with reason_code: {reason_code}", file=sys.stderr)
-            return 1
-        except Exception as exc:
-            # Unexpected system/database errors
-            print(f"error during ingestion transaction: {exc}", file=sys.stderr)
-            return 1
+    return None
 
 
 if __name__ == "__main__":

@@ -16,6 +16,10 @@ release/
 - `model_version` تغییرناپذیر است: `<name>.v<mlflow version>.<8 حرف اول model_sha256>`. هیچ‌وقت alias مثل `champion` یا `latest`.
 - اولین bundle همان baseline (احتمال ثابت) است تا API از روز اول مدل واقعیِ قابل انتشار داشته باشد.
 
+## bundle راه‌انداز و `cohort_hash`
+
+bundle ساخته‌شده با `promiseops make-baseline` فقط برای تست مسیر است. چون هیچ cohort اعتبارسنجی واقعی ندارد، `validation` در `release.json` برابر `null` است و `cohort_hash` در این مرحله ثبت نمی‌شود. `cohort_hash` بخشی از رکورد مدل واقعی است و worker در Issue #10 هنگام آموزش/ارزیابی candidate آن را پر می‌کند. bootstrap نه candidate است نه champion و هرگز به production نمی‌رود.
+
 ## اعتبارسنجی هنگام startup در API
 
 API فقط یک بار، هنگام شروع، `/opt/promiseops/release` را می‌خواند. ready فقط وقتی که همهٔ این‌ها درست باشد:

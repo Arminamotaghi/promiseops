@@ -195,14 +195,20 @@ def test_batch_id_conflict_raises_and_quarantines():
 def test_committed_order_extended_detected_and_rejected():
     """Rejects and quarantines attempts to add items or payments to an already committed order."""
     conn = FakeConnection()
+
+    # Step-by-step fetchone queue matching data.py
     conn.fetchone_queue = [
-        None,  # receipt lookup (None -> new batch)
-        None,  # select customer (None -> insert customer)
-        None,  # select seller
-        None,  # select product
+        None,  # 1. receipt lookup (None -> proceed as new batch)
+        None,  # 2. customer lookup (None -> insert customer, no immutability mismatch)
+        None,  # 3. seller lookup (None -> insert seller)
+        None,  # 4. product lookup (None -> insert product)
+        None,  # 5. order lookup (None -> proceed to customer FK check)
+        (1,),  # 6. customer foreign key check (exists -> passes FK check)
+        None,  # 7. item lookup (None -> triggers preexisting_child_order_ids check)
     ]
+    # Injected preexisting committed orders: order o1 is already committed!
     conn.fetchall_queue = [
-        [("o1",)]  # preexisting_child_order_ids: order o1 is already committed in DB!
+        [("o1",)]  # preexisting_child_order_ids returned by SELECT order_id FROM orders WHERE order_id = ANY(...)
     ]
 
     with pytest.raises(ValueError, match="^committed_order_extended$"):
@@ -283,6 +289,25 @@ def test_future_publication_rejected_and_quarantined():
 def test_cutoff_comparison_with_sao_paulo_timezone():
     """Verifies that publication cutoff comparisons correctly handle the America/Sao_Paulo timezone."""
     conn = FakeConnection()
+
+    # Provide None for all lookups so rows are treated as new insertions without immutability checks
+    # and provide (1,) for all foreign key lookups so FK constraints pass.
+    conn.fetchone_queue = [
+        None,  # 1. receipt lookup
+        None,  # 2. customer lookup
+        None,  # 3. seller lookup
+        None,  # 4. product lookup
+        None,  # 5. order lookup
+        (1,),  # 6. customer FK check
+        None,  # 7. item lookup
+        (1,),  # 8. order FK check for item
+        None,  # 9. payment lookup
+        (1,),  # 10. order FK check for payment
+    ]
+    conn.fetchall_queue = [
+        []     # preexisting_child_order_ids is empty
+    ]
+
     sao_paulo_tz = ZoneInfo("America/Sao_Paulo")
     valid_local_as_of = datetime(2023, 1, 1, 10, 0, 0, tzinfo=sao_paulo_tz)
 
