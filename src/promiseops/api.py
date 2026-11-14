@@ -5,9 +5,11 @@ import time
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse, Response
 from prometheus_client import CONTENT_TYPE_LATEST, Counter, Gauge, Histogram, generate_latest
+from sqlalchemy import create_engine, text
 from sqlalchemy.exc import SQLAlchemyError
 
 from promiseops.contracts import PredictionRequest
+from promiseops.release import BundleError, load_bundle
 
 REQUESTS = Counter(
     "promiseops_http_requests_total",
@@ -25,6 +27,34 @@ MODEL_READY = Gauge(
 )
 
 
+
+MODEL_INFO = Gauge(
+    "promiseops_model_info",
+    "Information about the loaded prediction model",
+    ["model_version"],
+)
+
+
+def check_database_ready():
+    url = os.getenv("PROMISEOPS_DATABASE_URL")
+    if not url:
+        return False
+
+    if url.startswith("postgresql://"):
+        url = "postgresql+psycopg://" + url[len("postgresql://"):]
+
+    try:
+        engine = create_engine(url, pool_pre_ping=True)
+        try:
+            with engine.connect() as connection:
+                connection.execute(text("SELECT 1"))
+            return True
+        finally:
+            engine.dispose()
+    except (SQLAlchemyError, OSError, ImportError):
+        return False
+
+
 def error_response(status_code: int, code: str, message: str) -> JSONResponse:
     return JSONResponse(
         status_code=status_code,
@@ -34,9 +64,27 @@ def error_response(status_code: int, code: str, message: str) -> JSONResponse:
 
 def create_app(*, model=None, database_ready=None):
     app = FastAPI(title="PromiseOps")
+
+    model_version = None
+    if model is None:
+        release_dir = os.getenv("PROMISEOPS_RELEASE_DIR", "release")
+        try:
+            bundle = load_bundle(release_dir)
+            model = bundle.model
+            model_version = bundle.metadata["model_version"]
+        except (BundleError, OSError, ValueError):
+            model = None
+
     app.state.model = model
+    app.state.model_version = model_version
     MODEL_READY.set(1 if model is not None else 0)
-    app.state.database_ready = database_ready or (lambda: False)
+    MODEL_INFO.clear()
+    if model is not None and model_version is not None:
+        MODEL_INFO.labels(model_version=model_version).set(1)
+
+    app.state.database_ready = (
+        database_ready if database_ready is not None else check_database_ready
+    )
 
     @app.middleware("http")
     async def check_api_key(request: Request, call_next):
