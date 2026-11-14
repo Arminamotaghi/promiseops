@@ -7,8 +7,8 @@ import pytest
 
 from promiseops.features import (
     CATEGORICAL_FEATURES,
-    FEATURES,
     FEATURE_CONTRACT_SHA256,
+    FEATURES,
     FORBIDDEN_INPUTS,
     LABEL_COLUMNS,
     NUMERIC_FEATURES,

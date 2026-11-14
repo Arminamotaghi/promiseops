@@ -58,6 +58,7 @@ def test_metrics_expose_http_counter_histogram_and_model_gauge(monkeypatch):
     )
 
     assert response.status_code == 200
+    assert "text/plain" in response.headers["content-type"]
     assert "promiseops_http_requests_total" in response.text
     assert 'route="/healthz"' in response.text
     assert 'method="GET"' in response.text
