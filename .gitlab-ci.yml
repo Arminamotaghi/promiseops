@@ -14,8 +14,8 @@ variables:
   HELM_RELEASE: promiseops
   # Only this GitLab user may run production deploy / rollback (change only through a reviewed MR).
   PROD_APPROVER: qbc13-g07-03
-  # TODO(staff): name of the staff-provided runtime secret (DB URL + API key) in staging/prod.
-  RUNTIME_SECRET_NAME: TODO-runtime-secret
+  # Staff-provided secret in staging/prod with the runtime configuration (DB URL, API key).
+  RUNTIME_SECRET_NAME: runtime-config
   # TODO(data): one released order ID used by the smoke test (not a secret).
   SMOKE_ORDER_ID: TODO-order-id
   # Staging deploys are manual until the runtime secret name is known and the image carries a
@@ -81,9 +81,8 @@ contracts:
 chart-lint:
   stage: test
   extends: .not-rollback
-  allow_failure: true  # TODO: set to false once helm is confirmed in the toolbox image
   script:
-    - helm version  # TODO(staff): confirm helm is available in $CI_TOOLBOX_IMAGE
+    - helm version
     - |
       for env in staging prod; do
         helm lint "$CHART_DIR" -f "$CHART_DIR/values-$env.yaml" \
@@ -108,7 +107,7 @@ build-own-image:
     - cp -a /opt/promiseops/wheelhouse ./wheelhouse
     - mkdir -p "$HOME/.docker"
     - python ci/registry_login.py
-    - buildctl --addr "$BUILDKIT_ADDR" --tlsservername "$BUILDKIT_SERVER_NAME" --tlscacert "$BUILDKIT_CA" --tlscert "$BUILDKIT_CERT" --tlskey "$BUILDKIT_KEY" build --frontend dockerfile.v0 --local context=. --local dockerfile=. --opt build-arg:BASE_IMAGE="$BASE_IMAGE" --opt build-arg:UV_IMAGE="$UV_IMAGE" --output type=image,name="$CI_REGISTRY_IMAGE/app:$CI_COMMIT_SHA",push=true --metadata-file build.json
+    - buildctl --addr "$BUILDKIT_ADDR" --tlsservername "$BUILDKIT_SERVER_NAME" --tlscacert "$BUILDKIT_CA" --tlscert "$BUILDKIT_CERT" --tlskey "$BUILDKIT_KEY" build --frontend dockerfile.v0 --local context=. --local dockerfile=. --opt build-arg:BASE_IMAGE="$BASE_IMAGE" --opt build-arg:UV_IMAGE="$UV_IMAGE" --opt build-arg:SOURCE_COMMIT="$CI_COMMIT_SHA" --output type=image,name="$CI_REGISTRY_IMAGE/app:$CI_COMMIT_SHA",push=true --metadata-file build.json
     - python -c 'import json; assert json.load(open("build.json"))["containerimage.digest"].startswith("sha256:")'
   artifacts:
     paths: [build.json]
@@ -224,5 +223,7 @@ inspect-own-namespaces:
   script:
     - for area in staging prod; do kubectl get pods,deployments,jobs,cronjobs,hpa -n "$TEAM-$area"; helm list -n "$TEAM-$area" || true; done
     # Names only (never values): tells us which runtime/pull secrets and service accounts exist.
-    - for area in staging prod; do kubectl get secrets,serviceaccounts -n "$TEAM-$area" -o name || true; done
+    - for area in staging prod; do kubectl get secrets -n "$TEAM-$area" -o name || true; done
+    # Key names and sizes only (describe never prints secret values).
+    - kubectl describe secret "$RUNTIME_SECRET_NAME" -n "$TEAM-staging" || true
     - kubectl get pods,jobs -n "$TEAM-jobs"

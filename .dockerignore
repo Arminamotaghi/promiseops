@@ -6,3 +6,6 @@
 !wheelhouse/**
 !release/**
 !release/
+!fixtures/
+!fixtures/synthetic-orders.json
+!fixtures/synthetic-outcomes.json

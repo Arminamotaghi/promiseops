@@ -60,20 +60,29 @@ python acceptance/load.py --url ... --rps 30 --seconds 240 --order-ids ids.json 
 # replicas: 2 → 3 ؛ بعد از پایان بار و ~۲ دقیقه: 3 → 2
 ```
 
-## منتظر جواب تیم آموزشی
+## مقدارهای محیط (از job `inspect-own-namespaces`)
+
+| مورد | مقدار |
+|---|---|
+| secret runtime (DB URL و API key) | `runtime-config` |
+| secret pull برای registry | `registry-pull` |
+| helm در image ابزار CI | هست؛ `chart-lint` اجباری است |
+| اجازهٔ deploy برای CI در staging | هست |
+
+## هنوز باز
 
 | مورد | کجا عوض شود |
 |---|---|
-| نام secret runtime (DB URL و API key) | `RUNTIME_SECRET_NAME` در `.gitlab-ci.yml` |
-| secret pull و service account | `values.yaml` |
-| helm در image ابزار CI هست؟ | `chart-lint` (فعلاً `allow_failure`) |
+| نام service account اجرا (CI اجازهٔ دیدن فهرست را ندارد) | `serviceAccountName` در `values.yaml` |
 | اجازهٔ port-forward برای CI | `.smoke-test` |
 | روش scrape شدن Prometheus | `service.annotations` یا `podAnnotations` |
-| `PROMISEOPS_API_KEY` به‌صورت متغیر masked و protected | تنظیمات CI (Maintainer) |
-| چرا pipeline branchها `stuck` است | runner |
+| `PROMISEOPS_API_KEY` به‌صورت متغیر masked و protected برای تست زنده | تنظیمات CI (Maintainer) |
+
+## مدل داخل image
+
+Dockerfile هنگام build دستور `promiseops make-baseline` را اجرا می‌کند و bundle راه‌انداز را در `/opt/promiseops/release` می‌گذارد (با همان Python و scikit-learn خود image). bundle راه‌انداز فقط برای آزمودن مسیر است و به production نمی‌رود؛ با آماده شدن مدل آموزش‌دیده، bundle تأییدشده جای آن را می‌گیرد (`docs/design/release.md`).
 
 ## وابستگی به بقیه
 
 - deploy واقعی روی staging وقتی موفق می‌شود که API حداقل `/healthz` و `/readyz` داشته باشد (اولین MR آرمینا).
 - `SMOKE_ORDER_ID`: یک order_id منتشرشده، بعد از اولین ingestion (محمدرضا).
-- قرار دادن bundle مدل در image: MR جدا بعد از قرارداد release.
