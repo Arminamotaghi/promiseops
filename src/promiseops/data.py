@@ -63,6 +63,7 @@ def ingest_batch(
                 conn.rollback()
             except Exception:
                 pass
+            raise
 
     batch_id = None
     payload_sha = None

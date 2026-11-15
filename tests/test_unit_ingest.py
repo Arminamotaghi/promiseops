@@ -17,6 +17,12 @@ class FakeCursor:
 
     def execute(self, query, params=None):
         self.conn.executed_queries.append((query.strip(), params))
+        # Log specific event for quarantine insertion
+        if "INSERT INTO QUARANTINE" in query.strip().upper():
+            self.conn.event_log.append("quarantine_insert")
+        else:
+            self.conn.event_log.append("execute")
+
 
     def fetchone(self):
         if self.conn.fetchone_queue:
@@ -42,6 +48,7 @@ class FakeConnection:
         self.fetchone_queue = []
         self.fetchall_queue = []
         self.executed_queries = []
+        self.event_log = []  # Initialization here is CRITICAL
         self.commit_count = 0
         self.rollback_count = 0
 
@@ -50,9 +57,11 @@ class FakeConnection:
 
     def rollback(self):
         self.rollback_count += 1
+        self.event_log.append("rollback")
 
     def commit(self):
         self.commit_count += 1
+        self.event_log.append("commit")
 
     def __enter__(self):
         return self
@@ -346,11 +355,13 @@ def test_cli_ingest_accepted_exit_zero(tmp_path, monkeypatch):
         *,
         as_of,
         expected_sha256,
+        file_name,
     ):
         captured["connection"] = connection
         captured["payload"] = payload
         captured["as_of"] = as_of
         captured["expected_sha256"] = expected_sha256
+        captured["file_name"] = file_name
 
         return {
             "batch_id": "b1",
@@ -383,6 +394,7 @@ def test_cli_ingest_accepted_exit_zero(tmp_path, monkeypatch):
         "postgresql://test:test@localhost/test"
     )
     assert captured["expected_sha256"] == "test-sha256"
+    assert captured["file_name"] == "batch.json"
 
 def test_outcome_missing_fk_raises_and_quarantines():
     """Verify that an outcome referencing a nonexistent order is quarantined."""
@@ -430,4 +442,16 @@ def test_outcome_missing_fk_raises_and_quarantines():
     assert conn.commit_count >= 1
 
     _, params = quarantine_queries[0]
+    # Assert key columns in quarantine record
+    assert params[1] == "b_outcome_missing_fk"
+    assert params[2] == payload_sha
     assert params[4] == "missing_fk"
+    assert params[6] == payload_bytes
+    assert params[7] == FIXED_NOW
+
+    # Assert transaction boundary ordering: rollback before insert, commit after insert
+    rollback_index = conn.event_log.index("rollback")
+    quarantine_index = conn.event_log.index("quarantine_insert")
+    commit_index = conn.event_log.index("commit", quarantine_index)
+
+    assert rollback_index < quarantine_index < commit_index
