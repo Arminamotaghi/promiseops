@@ -146,6 +146,7 @@ def main(argv: list[str] | None = None) -> int | None:
                 payload,
                 as_of=as_of,
                 expected_sha256=args.expected_sha256,
+                file_name=Path(args.file).name,
             )
 
         print(json.dumps(res, ensure_ascii=False, indent=2))
