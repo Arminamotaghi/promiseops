@@ -383,3 +383,51 @@ def test_cli_ingest_accepted_exit_zero(tmp_path, monkeypatch):
         "postgresql://test:test@localhost/test"
     )
     assert captured["expected_sha256"] == "test-sha256"
+
+def test_outcome_missing_fk_raises_and_quarantines():
+    """Verify that an outcome referencing a nonexistent order is quarantined."""
+    payload_dict = {
+        "schema_version": "1.0",
+        "kind": "outcomes",
+        "batch_id": "b_outcome_missing_fk",
+        "available_at": "2023-01-10T00:00:00Z",
+        "outcomes": [
+            {
+                "order_id": "nonexistent_order_999",
+                "delivered_at": "2023-01-05T12:00:00Z",
+                "available_at": "2023-01-05T12:00:00Z",
+            }
+        ],
+    }
+
+    payload_bytes = json.dumps(payload_dict).encode("utf-8")
+    file_sha = hashlib.sha256(payload_bytes).hexdigest()
+    payload_sha = digest(payload_dict)
+
+    conn = FakeConnection()
+    conn.fetchone_queue = [
+        None,  # No existing receipt for this batch.
+        None,  # The referenced order does not exist.
+    ]
+
+    with pytest.raises(ValueError, match="^missing_fk$"):
+        ingest_batch(
+            conn,
+            payload_bytes,
+            as_of=FIXED_NOW,
+            expected_sha256=file_sha,
+            expected_payload_sha256=payload_sha,
+        )
+
+    assert conn.rollback_count >= 1
+
+    quarantine_queries = [
+        (query, params)
+        for query, params in conn.executed_queries
+        if "INSERT INTO quarantine" in query
+    ]
+    assert len(quarantine_queries) == 1
+    assert conn.commit_count >= 1
+
+    _, params = quarantine_queries[0]
+    assert params[4] == "missing_fk"
