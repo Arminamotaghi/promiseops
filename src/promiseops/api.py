@@ -1,6 +1,9 @@
 import hmac
 import os
 import time
+from contextlib import asynccontextmanager
+from threading import Lock
+from uuid import uuid4
 
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse, Response
@@ -9,7 +12,8 @@ from sqlalchemy import create_engine, text
 from sqlalchemy.exc import SQLAlchemyError
 
 from promiseops.contracts import PredictionRequest
-from promiseops.release import BundleError, load_bundle
+from promiseops.features import build_features
+from promiseops.release import BundleError, _positive_probability, load_bundle
 
 REQUESTS = Counter(
     "promiseops_http_requests_total",
@@ -34,6 +38,47 @@ MODEL_INFO = Gauge(
     ["model_version"],
 )
 
+
+
+def create_database_engine():
+    """Create the SQLAlchemy engine using the configured psycopg driver."""
+    url = os.getenv("PROMISEOPS_DATABASE_URL")
+    if not url:
+        raise ValueError("PROMISEOPS_DATABASE_URL is required")
+    if url.startswith("postgresql://"):
+        url = "postgresql+psycopg://" + url[len("postgresql://"):]
+    return create_engine(url, pool_pre_ping=True)
+
+
+
+def calculate_order_risk(connection, model, order_id: str):
+    """Build order features and calculate late-delivery probability."""
+    from datetime import UTC, datetime
+
+    features = build_features(
+        connection,
+        [order_id],
+        as_of=datetime.now(UTC),
+    )
+
+    if features.empty:
+        return None
+
+    return _positive_probability(model, features)
+
+def get_existing_prediction(connection, request_id: str):
+    """Read an existing prediction for idempotent API requests."""
+    statement = text(
+        """
+        SELECT order_id, request_id, risk_probability, model_version
+        FROM predictions
+        WHERE request_id = :request_id
+        """
+    )
+    return connection.execute(
+        statement,
+        {"request_id": request_id},
+    ).mappings().first()
 
 def check_database_ready():
     url = os.getenv("PROMISEOPS_DATABASE_URL")
@@ -63,7 +108,19 @@ def error_response(status_code: int, code: str, message: str) -> JSONResponse:
 
 
 def create_app(*, model=None, database_ready=None):
-    app = FastAPI(title="PromiseOps")
+    @asynccontextmanager
+    async def lifespan(app: FastAPI):
+        try:
+            yield
+        finally:
+            with app.state.database_engine_lock:
+                engine = app.state.database_engine
+                app.state.database_engine = None
+
+            if engine is not None:
+                engine.dispose()
+
+    app = FastAPI(title="PromiseOps", lifespan=lifespan)
 
     model_version = None
     if model is None:
@@ -77,6 +134,15 @@ def create_app(*, model=None, database_ready=None):
 
     app.state.model = model
     app.state.model_version = model_version
+    app.state.database_engine = None
+    app.state.database_engine_lock = Lock()
+
+    def get_database_engine():
+        with app.state.database_engine_lock:
+            if app.state.database_engine is None:
+                app.state.database_engine = create_database_engine()
+            return app.state.database_engine
+    app.state.database_engine = None
     MODEL_READY.set(1 if model is not None else 0)
     MODEL_INFO.clear()
     if model is not None and model_version is not None:
@@ -151,10 +217,108 @@ def create_app(*, model=None, database_ready=None):
                 "Prediction model is not available",
             )
 
-        return error_response(
-            503,
-            "model_unavailable",
-            "Prediction model integration is not configured",
-        )
+        request_id = payload.request_id or uuid4().hex
+
+        try:
+            engine = get_database_engine()
+
+            with engine.begin() as connection:
+                existing = get_existing_prediction(connection, request_id)
+
+                if existing is not None:
+                    if existing["order_id"] != payload.order_id:
+                        return error_response(
+                            409,
+                            "request_id_conflict",
+                            "Request ID belongs to another order",
+                        )
+                    return {
+                        "order_id": existing["order_id"],
+                        "request_id": existing["request_id"],
+                        "risk_probability": existing["risk_probability"],
+                        "model_version": existing["model_version"],
+                    }
+
+                probability = calculate_order_risk(
+                    connection,
+                    app.state.model,
+                    payload.order_id,
+                )
+
+                if probability is None:
+                    return error_response(
+                        404,
+                        "order_not_found",
+                        "Order was not found",
+                    )
+
+                model_version = app.state.model_version
+                if not model_version:
+                    return error_response(
+                        503,
+                        "model_unavailable",
+                        "Model version is unavailable",
+                    )
+
+                inserted = connection.execute(
+                    text(
+                        """
+                        INSERT INTO predictions (
+                            request_id,
+                            order_id,
+                            risk_probability,
+                            model_version,
+                            source
+                        )
+                        VALUES (
+                            :request_id,
+                            :order_id,
+                            :risk_probability,
+                            :model_version,
+                            'api'
+                        )
+                        ON CONFLICT (request_id) DO NOTHING
+                        RETURNING order_id, request_id,
+                                  risk_probability, model_version
+                        """
+                    ),
+                    {
+                        "request_id": request_id,
+                        "order_id": payload.order_id,
+                        "risk_probability": probability,
+                        "model_version": model_version,
+                    },
+                ).mappings().first()
+
+                if inserted is None:
+                    inserted = get_existing_prediction(connection, request_id)
+
+                if inserted is None:
+                    return error_response(
+                        503,
+                        "internal_error",
+                        "Prediction could not be saved",
+                    )
+
+                if inserted["order_id"] != payload.order_id:
+                    return error_response(
+                        409,
+                        "request_id_conflict",
+                        "Request ID belongs to another order",
+                    )
+
+                return {
+                    "order_id": inserted["order_id"],
+                    "request_id": inserted["request_id"],
+                    "risk_probability": inserted["risk_probability"],
+                    "model_version": inserted["model_version"],
+                }
+
+        except (SQLAlchemyError, OSError, ValueError, BundleError):
+            return error_response(
+                500,
+                "internal_error",
+                "Prediction could not be completed",
+            )
 
     return app
