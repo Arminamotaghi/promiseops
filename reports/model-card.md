@@ -40,6 +40,15 @@ The 15 features and their order are defined in `contracts/features.json` and imp
 - Test: `(2018-03-31T23:59:59Z, 2018-05-31T23:59:59Z]`; kept untouched for final evaluation.
 - Replay: from `2018-06-01T00:00:00Z`.
 
+## Scope of this MR
+
+This MR implements the training and candidate/champion comparison path only. The test and
+replay windows above are binding team contract (`docs/design/features-and-split.md`), but
+their scoring and evaluation code is **not** part of this MR: the public model API exposes
+`load_training_frames`, `train_candidate`, `evaluate_predictions` and `compare_candidate`.
+The test cohort stays untouched until final evaluation, and replay evaluation is deferred to
+the monitoring work (Issue #13). No test or replay API is exposed yet.
+
 ## Approaches
 
 All approaches use the same feature frame and validation order IDs. Candidate and champion
