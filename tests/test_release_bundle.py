@@ -221,7 +221,7 @@ def test_current_source_commit_falls_back_to_git(monkeypatch):
     assert current_source_commit() == "c" * 40
 
 
-def test_current_source_commit_returns_zeroes_when_git_is_unavailable(monkeypatch):
+def test_current_source_commit_fails_when_git_is_unavailable(monkeypatch):
     monkeypatch.delenv("CI_COMMIT_SHA", raising=False)
 
     def fail(*args, **kwargs):
@@ -229,14 +229,16 @@ def test_current_source_commit_returns_zeroes_when_git_is_unavailable(monkeypatc
 
     monkeypatch.setattr("promiseops.release.subprocess.run", fail)
 
-    assert current_source_commit() == "0" * 40
+    with pytest.raises(BundleError, match="source commit is unavailable"):
+        current_source_commit()
 
 
-def test_current_source_commit_returns_zeroes_for_invalid_git_output(monkeypatch):
+def test_current_source_commit_fails_for_invalid_git_output(monkeypatch):
     monkeypatch.delenv("CI_COMMIT_SHA", raising=False)
     monkeypatch.setattr(
         "promiseops.release.subprocess.run",
         lambda *args, **kwargs: SimpleNamespace(stdout="not-a-sha"),
     )
 
-    assert current_source_commit() == "0" * 40
+    with pytest.raises(BundleError, match="source commit is unavailable"):
+        current_source_commit()

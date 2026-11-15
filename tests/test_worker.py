@@ -11,7 +11,7 @@ from sklearn.pipeline import Pipeline
 from promiseops import worker
 from promiseops.features import FEATURES, cohort_hash
 from promiseops.model import ApproachResult, Candidate, EvaluationMetrics
-from promiseops.release import load_bundle
+from promiseops.release import load_bundle, write_release_bundle
 
 TRAIN_END = datetime(2017, 12, 31, 23, 59, 59, tzinfo=UTC)
 VALIDATION_END = datetime(2018, 3, 31, 23, 59, 59, tzinfo=UTC)
@@ -42,6 +42,19 @@ def _metrics(
         average_precision=average_precision,
         brier=brier,
         cohort_hash=COHORT_HASH,
+    )
+
+
+def _incumbent_bundle(bundle_dir) -> dict:
+    return write_release_bundle(
+        bundle_dir,
+        _model(),
+        model_name="late-risk-incumbent",
+        approach="logistic_regression",
+        source_commit="b" * 40,
+        cutoffs={"train_end": "2017-12-31T23:59:59+00:00"},
+        validation=None,
+        gate={"decision": "accepted", "reasons": []},
     )
 
 
@@ -130,7 +143,10 @@ def test_run_train_writes_a_bundle_that_load_bundle_accepts(tmp_path, monkeypatc
         "logistic_regression",
         "hist_gradient_boosting",
     }
+    assert metadata["validation"]["champion"]["approach"] == "baseline"
+    assert metadata["validation"]["champion"]["source"] == "baseline"
     assert metadata["gate"]["decision"] == "accepted"
+    assert metadata["gate"]["champion"] == "baseline"
     assert metadata["mlflow"] is None
     assert metadata["data"]["feed_as_of"] == AS_OF.isoformat()
 
@@ -140,6 +156,55 @@ def test_run_train_writes_a_bundle_that_load_bundle_accepts(tmp_path, monkeypatc
     probabilities = bundle.model.predict_proba(sample)
     assert probabilities.shape[0] == 1
     assert 0.0 <= float(probabilities[0, 0]) <= 1.0
+
+
+def test_run_train_compares_with_existing_incumbent_bundle(tmp_path, monkeypatch):
+    bundle_dir = tmp_path / "release"
+    incumbent = _incumbent_bundle(bundle_dir)
+    candidate = _candidate()
+
+    monkeypatch.setattr(worker, "train_candidate", lambda *args, **kwargs: candidate)
+    monkeypatch.setattr(worker, "current_source_commit", lambda: "a" * 40)
+
+    def fake_build_features(connection, order_ids, *, as_of, labeled=False):
+        return pd.DataFrame(
+            {
+                **{name: 0.0 for name in FEATURES},
+                "late": [True, False, False, False],
+            },
+            index=pd.Index(VALIDATION_IDS, name="order_id"),
+        )
+
+    monkeypatch.setattr(worker, "build_features", fake_build_features)
+
+    metadata = worker.run_train(
+        "connection",
+        train_end=TRAIN_END,
+        validation_end=VALIDATION_END,
+        as_of=AS_OF,
+        out_dir=bundle_dir,
+    )
+
+    assert incumbent["model_version"].startswith("late-risk-incumbent.v0.")
+    assert metadata["validation"]["champion"]["source"] == "incumbent"
+    assert metadata["validation"]["champion"]["approach"].startswith("incumbent:")
+    assert metadata["gate"]["champion"].startswith("incumbent:")
+    assert metadata["gate"]["decision"] == "rejected"
+    assert metadata["gate"]["reasons"] == ["recall_at_10 decreased"]
+
+
+def test_load_incumbent_copies_the_serving_bundle(tmp_path, monkeypatch):
+    serving = tmp_path / "serving"
+    serving_metadata = _incumbent_bundle(serving)
+    monkeypatch.setattr(worker, "INCUMBENT_DIR", serving)
+    out_dir = tmp_path / "artifacts"
+
+    bundle = worker._load_incumbent(out_dir)
+
+    assert bundle is not None
+    assert bundle.metadata == serving_metadata
+    assert (out_dir / "release.json").is_file()
+    assert (out_dir / "model.joblib").is_file()
 
 
 def test_main_train_wires_environment_database_and_release_path(tmp_path, monkeypatch, capsys):
@@ -210,17 +275,19 @@ def test_database_url_requires_the_environment_variable(monkeypatch):
         worker._database_url()
 
 
-def test_monitor_train_is_deferred():
-    with pytest.raises(NotImplementedError, match="monitor-train"):
-        worker.main(
-            [
-                "--mode",
-                "monitor-train",
-                "--train-end",
-                "2017-12-31T23:59:59Z",
-                "--validation-end",
-                "2018-03-31T23:59:59Z",
-                "--as-of",
-                "2018-05-01T00:00:00Z",
-            ]
-        )
+def test_monitor_train_is_deferred_with_a_clean_failure(capsys):
+    exit_code = worker.main(
+        [
+            "--mode",
+            "monitor-train",
+            "--train-end",
+            "2017-12-31T23:59:59Z",
+            "--validation-end",
+            "2018-03-31T23:59:59Z",
+            "--as-of",
+            "2018-05-01T00:00:00Z",
+        ]
+    )
+
+    assert exit_code == 2
+    assert "monitor-train is not implemented yet" in capsys.readouterr().err

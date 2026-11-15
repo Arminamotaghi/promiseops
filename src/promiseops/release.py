@@ -83,13 +83,23 @@ def _git_sha() -> str:
             text=True,
         )
     except (OSError, subprocess.SubprocessError):
-        return "0" * 40
+        raise BundleError(
+            "source commit is unavailable: set CI_COMMIT_SHA or run inside a Git checkout"
+        ) from None
     candidate = result.stdout.strip().lower()
-    return candidate if _is_commit(candidate) else "0" * 40
+    if not _is_commit(candidate):
+        raise BundleError(
+            "source commit is unavailable: set CI_COMMIT_SHA or run inside a Git checkout"
+        )
+    return candidate
 
 
 def current_source_commit() -> str:
-    """Return the 40-character commit recorded in release metadata."""
+    """Return the 40-character commit recorded in release metadata.
+
+    Raises ``BundleError`` instead of inventing a placeholder when neither ``CI_COMMIT_SHA``
+    nor a Git checkout is available, so provenance is never silently faked.
+    """
     return _git_sha()
 
 
