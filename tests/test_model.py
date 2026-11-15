@@ -22,7 +22,7 @@ from promiseops.model import (
 
 TRAIN_END = datetime(2017, 12, 31, 23, 59, 59, tzinfo=UTC)
 VALIDATION_END = datetime(2018, 3, 31, 23, 59, 59, tzinfo=UTC)
-AS_OF = datetime(2018, 5, 1, 12, 0, tzinfo=UTC)
+AS_OF = datetime(2018, 5, 1, 0, 0, tzinfo=UTC)
 
 DDL = """
 CREATE TABLE customers (
@@ -324,6 +324,13 @@ def test_train_candidate_returns_three_approaches(connection):
         assert result.metrics.n == 4
         assert result.metrics.k == 1
         assert result.metrics.cohort_hash == expected_hash
+
+    baseline = candidate.results["baseline"].metrics
+    assert baseline.prevalence == pytest.approx(0.50)
+    assert baseline.recall_at_10 == pytest.approx(0.50)
+    assert baseline.precision_at_10 == pytest.approx(1.00)
+    assert baseline.average_precision == pytest.approx(0.50)
+    assert baseline.brier == pytest.approx(0.2500)
 
 
 def _metrics(**overrides) -> EvaluationMetrics:
