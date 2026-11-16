@@ -30,9 +30,12 @@ from promiseops.release import (
     current_source_commit,
     load_bundle,
     write_release_bundle,
+    write_release_metadata,
 )
 
 INCUMBENT_DIR = Path("/opt/promiseops/release")
+MLFLOW_EXPERIMENT = "promiseops-g07"
+MLFLOW_REGISTERED_MODEL = "promiseops-late-risk"
 
 
 def choose_approach(candidate: Candidate) -> ApproachResult:
@@ -170,6 +173,96 @@ def _incumbent_metrics(
     )
 
 
+def _log_mlflow(
+    out_dir: Path,
+    metadata: dict,
+    model,
+    *,
+    mlflow_module=None,
+) -> dict:
+    """Log one training run and the exact bundle to the team MLflow server."""
+    if mlflow_module is None:
+        import mlflow as mlflow_module
+        import mlflow.sklearn
+
+    tracking_uri = os.environ.get("MLFLOW_TRACKING_URI")
+    if not tracking_uri:
+        raise RuntimeError("MLFLOW_TRACKING_URI is not configured")
+
+    experiment = MLFLOW_EXPERIMENT
+    registered_model = MLFLOW_REGISTERED_MODEL
+    validation = metadata["validation"]
+    cutoffs = metadata["cutoffs"]
+
+    mlflow_module.set_tracking_uri(tracking_uri)
+    mlflow_module.set_experiment(experiment)
+    with mlflow_module.start_run(
+        run_name=f"late-risk-{metadata['approach']}-{metadata['model_sha256'][:8]}"
+    ) as run:
+        run_id = run.info.run_id
+        mlflow_module.log_params(
+            {
+                "approach": metadata["approach"],
+                "model_sha256": metadata["model_sha256"],
+                "source_commit": metadata["source_commit"],
+                "feature_contract_sha256": metadata["feature_contract_sha256"],
+                "cohort_hash": validation["cohort_hash"],
+                "n": validation["n"],
+                "k": validation["k"],
+                "train_end": cutoffs["train_end"],
+                "validation_end": cutoffs["validation_end"],
+                "as_of": cutoffs["as_of"],
+                "label_cutoff_train": cutoffs["label_cutoff_train"],
+                "label_cutoff_validation": cutoffs["label_cutoff_validation"],
+            }
+        )
+        mlflow_module.log_metrics(
+            {
+                "n": validation["n"],
+                "prevalence": validation["prevalence"],
+                "k": validation["k"],
+                "recall_at_10": validation["recall_at_10"],
+                "precision_at_10": validation["precision_at_10"],
+                "average_precision": validation["average_precision"],
+                "brier": validation["brier"],
+            }
+        )
+        mlflow_module.set_tags(
+            {
+                "approach": metadata["approach"],
+                "gate_decision": metadata["gate"]["decision"],
+                "champion": metadata["gate"]["champion"],
+            }
+        )
+        mlflow_module.sklearn.log_model(
+            sk_model=model,
+            artifact_path="model",
+            registered_model_name=registered_model,
+        )
+        client = mlflow_module.MlflowClient()
+        versions = [
+            int(item.version)
+            for item in client.search_model_versions(f"name='{registered_model}'")
+        ]
+        if not versions:
+            raise RuntimeError("MLflow did not return a registered model version")
+        version = max(versions)
+        info = {
+            "experiment": experiment,
+            "run_id": run_id,
+            "registered_model": registered_model,
+            "version": str(version),
+        }
+        metadata["mlflow"] = info
+        metadata["model_version"] = (
+            f"late-risk-{metadata['approach']}.v{version}.{metadata['model_sha256'][:8]}"
+        )
+        write_release_metadata(out_dir, metadata)
+        mlflow_module.log_artifacts(str(out_dir), artifact_path="bundle")
+
+    return info
+
+
 def run_train(
     connection,
     *,
@@ -177,8 +270,9 @@ def run_train(
     validation_end: datetime,
     as_of: datetime,
     out_dir: Path | str,
+    mlflow_module=None,
 ) -> dict:
-    """Train, compare with the incumbent when present, and write a validated bundle."""
+    """Train, compare with the incumbent when present, and log the validated bundle."""
     out_dir = Path(out_dir)
     source_commit = current_source_commit()
     incumbent = _load_incumbent(out_dir)
@@ -201,7 +295,7 @@ def run_train(
         )
         champion_source = "incumbent"
     gate = compare_candidate(chosen, champion, candidate.validation_order_ids)
-    return write_release_bundle(
+    metadata = write_release_bundle(
         out_dir,
         chosen.model,
         model_name=f"late-risk-{chosen.approach}",
@@ -217,6 +311,8 @@ def run_train(
             "last_batch_id": None,
         },
     )
+    _log_mlflow(out_dir, metadata, chosen.model, mlflow_module=mlflow_module)
+    return metadata
 
 
 def _database_url() -> str:
