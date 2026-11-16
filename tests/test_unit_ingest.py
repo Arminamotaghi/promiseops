@@ -233,6 +233,46 @@ def test_committed_order_extended_detected_and_rejected():
     assert conn.rollback_count >= 1
     assert any("INSERT INTO quarantine" in query for query, _ in conn.executed_queries)
 
+def test_item_missing_external_product_raises_and_quarantines():
+    payload_dict = {**VALID_PAYLOAD_DICT, "products": []}
+    payload_bytes = json.dumps(payload_dict).encode("utf-8")
+    file_sha = hashlib.sha256(payload_bytes).hexdigest()
+    payload_sha = digest(payload_dict)
+
+    conn = FakeConnection()
+    conn.fetchone_queue = [
+        None,  # no prior receipt
+        None,  # customer dimension
+        None,  # seller dimension
+        None,  # order lookup
+        (1,),  # customer FK for the order
+        None,  # item lookup
+        (1,),  # order FK for the item
+        None,  # product p1 is missing
+    ]
+    conn.fetchall_queue = [[]]  # no preexisting child orders
+
+    with pytest.raises(ValueError, match="^missing_fk$"):
+        ingest_batch(
+            conn,
+            payload_bytes,
+            as_of=FIXED_NOW,
+            expected_sha256=file_sha,
+            expected_payload_sha256=payload_sha,
+        )
+
+    assert conn.rollback_count >= 1
+    quarantine = [
+        (query, params)
+        for query, params in conn.executed_queries
+        if "INSERT INTO quarantine" in query
+    ]
+    assert len(quarantine) == 1
+    params = quarantine[0][1]
+    assert params[1] == "b1"
+    assert params[2] == payload_sha
+    assert params[4] == "missing_fk"
+    assert params[6] == payload_bytes
 
 def test_dimension_on_conflict_do_nothing():
     """Verifies that duplicate dimension records are ignored using ON CONFLICT DO NOTHING."""
