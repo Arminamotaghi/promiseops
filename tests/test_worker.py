@@ -1,6 +1,7 @@
 import json
 from contextlib import contextmanager
 from datetime import UTC, datetime
+from pathlib import Path
 
 import numpy as np
 import pandas as pd
@@ -11,7 +12,9 @@ from sklearn.pipeline import Pipeline
 from promiseops import worker
 from promiseops.features import FEATURES, cohort_hash
 from promiseops.model import ApproachResult, Candidate, EvaluationMetrics
-from promiseops.release import load_bundle, write_release_bundle
+from promiseops.release import build_baseline_bundle, load_bundle, write_release_bundle
+
+FIXTURES = Path(__file__).resolve().parents[1] / "fixtures"
 
 TRAIN_END = datetime(2017, 12, 31, 23, 59, 59, tzinfo=UTC)
 VALIDATION_END = datetime(2018, 3, 31, 23, 59, 59, tzinfo=UTC)
@@ -205,6 +208,41 @@ def test_load_incumbent_copies_the_serving_bundle(tmp_path, monkeypatch):
     assert bundle.metadata == serving_metadata
     assert (out_dir / "release.json").is_file()
     assert (out_dir / "model.joblib").is_file()
+
+
+def test_load_incumbent_ignores_the_bootstrap_bundle(tmp_path, monkeypatch):
+    serving = tmp_path / "serving"
+    build_baseline_bundle(serving, fixtures_dir=FIXTURES, source_commit="c" * 40)
+    monkeypatch.setattr(worker, "INCUMBENT_DIR", serving)
+    out_dir = tmp_path / "artifacts"
+
+    assert worker._load_incumbent(out_dir) is None
+    assert not (out_dir / "release.json").exists()
+
+
+def test_run_train_gates_first_candidate_against_training_baseline(tmp_path, monkeypatch):
+    serving = tmp_path / "serving"
+    build_baseline_bundle(serving, fixtures_dir=FIXTURES, source_commit="c" * 40)
+    monkeypatch.setattr(worker, "INCUMBENT_DIR", serving)
+    monkeypatch.setattr(worker, "train_candidate", lambda *args, **kwargs: _candidate())
+    monkeypatch.setattr(worker, "current_source_commit", lambda: "a" * 40)
+
+    def fail_build_features(*args, **kwargs):
+        raise AssertionError("the bootstrap bundle must not be scored as a champion")
+
+    monkeypatch.setattr(worker, "build_features", fail_build_features)
+
+    metadata = worker.run_train(
+        "connection",
+        train_end=TRAIN_END,
+        validation_end=VALIDATION_END,
+        as_of=AS_OF,
+        out_dir=tmp_path / "artifacts",
+    )
+
+    assert metadata["validation"]["champion"]["source"] == "baseline"
+    assert metadata["gate"]["champion"] == "baseline"
+    assert metadata["gate"]["decision"] == "accepted"
 
 
 def test_main_train_wires_environment_database_and_release_path(tmp_path, monkeypatch, capsys):

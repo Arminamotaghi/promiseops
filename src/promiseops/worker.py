@@ -117,6 +117,12 @@ def _cutoffs(
     }
 
 
+def _is_bootstrap(bundle: ReleaseBundle) -> bool:
+    """True for the path-only bundle the image carries before any trained release."""
+    gate = bundle.metadata.get("gate")
+    return isinstance(gate, dict) and gate.get("decision") == "bootstrap"
+
+
 def _load_incumbent(out_dir: Path) -> ReleaseBundle | None:
     for bundle_dir in (out_dir, INCUMBENT_DIR):
         if not (bundle_dir / RELEASE_FILE).is_file():
@@ -124,6 +130,10 @@ def _load_incumbent(out_dir: Path) -> ReleaseBundle | None:
         try:
             bundle = load_bundle(bundle_dir)
         except (BundleError, OSError):
+            continue
+        if _is_bootstrap(bundle):
+            # Not a trained champion: the first candidate is gated against the
+            # training-prevalence baseline instead (docs/CONTRACTS.md, evaluation and release).
             continue
         if bundle_dir != out_dir:
             out_dir.mkdir(parents=True, exist_ok=True)
