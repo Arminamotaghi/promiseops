@@ -43,6 +43,7 @@ class FakeMlflow:
 
     def _log_model(self, **kwargs):
         self.calls.append(("sklearn.log_model", kwargs))
+        return SimpleNamespace(registered_model_version=self.version)
 
     def set_tracking_uri(self, uri):
         self.calls.append(("set_tracking_uri", uri))
@@ -65,15 +66,6 @@ class FakeMlflow:
 
     def log_artifacts(self, local_dir, artifact_path):
         self.calls.append(("log_artifacts", local_dir, artifact_path))
-
-    def MlflowClient(self):
-        version = self.version
-
-        class Client:
-            def search_model_versions(self, filter_string):
-                return [SimpleNamespace(version=version)]
-
-        return Client()
 
 
 @pytest.fixture
@@ -222,6 +214,12 @@ def test_run_train_writes_a_bundle_that_load_bundle_accepts(tmp_path, monkeypatc
     assert ("set_experiment", "promiseops-g07") in fake_mlflow.calls
     assert any(call[0] == "log_params" for call in fake_mlflow.calls)
     assert any(call[0] == "log_metrics" for call in fake_mlflow.calls)
+    log_model = next(call for call in fake_mlflow.calls if call[0] == "sklearn.log_model")
+    assert log_model[1]["name"] == "model"
+    assert log_model[1]["registered_model_name"] == "promiseops-late-risk"
+    assert log_model[1]["skops_trusted_types"] == [
+        "sklearn.ensemble._hist_gradient_boosting.predictor.TreePredictor"
+    ]
     assert ("log_artifacts", str(bundle_dir), "bundle") in fake_mlflow.calls
     assert metadata["data"]["feed_as_of"] == AS_OF.isoformat()
 

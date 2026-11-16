@@ -234,19 +234,18 @@ def _log_mlflow(
                 "champion": metadata["gate"]["champion"],
             }
         )
-        mlflow_module.sklearn.log_model(
+        model_info = mlflow_module.sklearn.log_model(
             sk_model=model,
-            artifact_path="model",
+            name="model",
             registered_model_name=registered_model,
+            skops_trusted_types=[
+                "sklearn.ensemble._hist_gradient_boosting.predictor.TreePredictor"
+            ],
         )
-        client = mlflow_module.MlflowClient()
-        versions = [
-            int(item.version)
-            for item in client.search_model_versions(f"name='{registered_model}'")
-        ]
-        if not versions:
+        version = getattr(model_info, "registered_model_version", None)
+        if version is None:
             raise RuntimeError("MLflow did not return a registered model version")
-        version = max(versions)
+        version = str(version)
         info = {
             "experiment": experiment,
             "run_id": run_id,
