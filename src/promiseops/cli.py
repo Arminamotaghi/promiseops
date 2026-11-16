@@ -106,12 +106,19 @@ def main(argv: list[str] | None = None) -> int | None:
                 parser.error(f"invalid --as-of: {exc}")
             parser.error(str(exc))
 
-        print(
-            "Priority scoring is not available: database and model integration "
-            f"are not implemented (as_of={as_of.isoformat()}).",
-            file=sys.stderr,
-        )
-        return 1
+        from promiseops.priority_job import score_priority
+
+        try:
+            output = score_priority(as_of=as_of)
+        except Exception as exc:
+            print(
+                f"Priority scoring failed: {type(exc).__name__}",
+                file=sys.stderr,
+            )
+            return 1
+
+        print(json.dumps(output, indent=2, sort_keys=True))
+        return 0
 
     if args.command == "make-baseline":
         metadata = build_baseline_bundle(args.out, fixtures_dir=args.fixtures)
