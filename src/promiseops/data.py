@@ -204,6 +204,19 @@ def ingest_batch(
                     )
 
             # Items
+            # Check that products not in the current batch exist in the database
+            for p_id in checked.external.product_ids:
+                cur.execute("SELECT 1 FROM products WHERE product_id = %s", (p_id,))
+                if not cur.fetchone():
+                    raise IngestRejected("missing_fk", f"missing product {p_id}")
+
+            # Check that sellers not in the current batch exist in the database
+            for s_id in checked.external.seller_ids:
+                cur.execute("SELECT 1 FROM sellers WHERE seller_id = %s", (s_id,))
+                if not cur.fetchone():
+                    raise IngestRejected("missing_fk", f"missing seller {s_id}")
+
+            # Process and insert items
             for item in batch.items:
                 item_sha = row_sha256(item)
                 cur.execute("SELECT row_sha256 FROM items WHERE order_id = %s AND item_id = %s", (item.order_id, item.item_id))
