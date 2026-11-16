@@ -154,10 +154,18 @@ deploy-staging:
   artifacts:
     paths: [deploy-staging.json]
 
+# Release gate: unlike deploy-staging, a failed check here is NOT allowed to fail, so
+# deploy-prod (which needs this job) cannot be started for the same pipeline.
 verify-staging:
   stage: verify-staging
-  extends: .staging-rules
   needs: [deploy-staging]
+  rules:
+    - if: '$ROLLBACK_DIGEST'
+      when: never
+    - if: '$CI_COMMIT_REF_PROTECTED == "true" && $STAGING_AUTO_DEPLOY == "true"'
+    - if: '$CI_COMMIT_REF_PROTECTED == "true"'
+      when: manual
+      allow_failure: false
   variables:
     NAMESPACE: "$TEAM-staging"
   script:
