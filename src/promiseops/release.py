@@ -204,6 +204,14 @@ def build_baseline_bundle(
     return metadata
 
 
+def write_release_metadata(out_dir: Path | str, metadata: dict) -> dict:
+    """Rewrite ``release.json`` after a late field update and re-run startup checks."""
+    out_dir = Path(out_dir)
+    (out_dir / RELEASE_FILE).write_text(json.dumps(metadata, indent=2, sort_keys=True) + "\n")
+    load_bundle(out_dir)
+    return metadata
+
+
 def write_release_bundle(
     out_dir: Path | str,
     model,
@@ -256,9 +264,7 @@ def write_release_bundle(
         "gate": gate,
         "created_at": datetime.now(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z"),
     }
-    (out_dir / RELEASE_FILE).write_text(json.dumps(metadata, indent=2, sort_keys=True) + "\n")
-    load_bundle(out_dir)
-    return metadata
+    return write_release_metadata(out_dir, metadata)
 
 
 def _positive_probability(model: object, sample: pd.DataFrame) -> float:
@@ -344,4 +350,5 @@ __all__ = [
     "load_bundle",
     "sha256_file",
     "write_release_bundle",
+    "write_release_metadata",
 ]
