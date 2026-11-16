@@ -1,6 +1,8 @@
 import hmac
+import logging
 import os
 import time
+
 from contextlib import asynccontextmanager
 from threading import Lock
 from uuid import uuid4
@@ -14,6 +16,10 @@ from sqlalchemy.exc import SQLAlchemyError
 from promiseops.contracts import PredictionRequest
 from promiseops.features import build_features
 from promiseops.release import BundleError, _positive_probability, load_bundle
+
+
+logger = logging.getLogger(__name__)
+
 
 REQUESTS = Counter(
     "promiseops_http_requests_total",
@@ -314,7 +320,11 @@ def create_app(*, model=None, database_ready=None):
                     "model_version": inserted["model_version"],
                 }
 
-        except (SQLAlchemyError, OSError, ValueError, BundleError):
+        except (SQLAlchemyError, OSError, ValueError, BundleError) as exc:
+            logger.error(
+                "Predict failed: exception_type=%s",
+                type(exc).__name__,
+            )
             return error_response(
                 500,
                 "internal_error",
