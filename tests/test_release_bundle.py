@@ -1,5 +1,6 @@
 import json
 from pathlib import Path
+from types import SimpleNamespace
 
 import joblib
 import pandas as pd
@@ -20,8 +21,10 @@ from promiseops.features import (
 from promiseops.release import (
     BundleError,
     build_baseline_bundle,
+    current_source_commit,
     load_bundle,
     sha256_file,
+    write_release_bundle,
 )
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -145,3 +148,97 @@ def test_load_bundle_rejects_unsafe_model_file(tmp_path):
 
     with pytest.raises(BundleError, match="plain filename"):
         load_bundle(bundle_dir)
+
+
+def _write_candidate(bundle_dir: Path, **overrides) -> dict:
+    kwargs = {
+        "model_name": "late-risk-test",
+        "approach": "logistic_regression",
+        "source_commit": "a" * 40,
+        "cutoffs": {"train_end": "2017-12-31T23:59:59+00:00"},
+        "validation": {"cohort_hash": "b" * 64, "n": 4},
+        "gate": {"decision": "accepted", "reasons": []},
+        "mlflow": {"run_id": "run-1", "experiment": "promiseops"},
+        "data": {
+            "schema_version": "1.0",
+            "feed_as_of": "2018-05-01T00:00:00+00:00",
+            "last_batch_id": "batch-1",
+        },
+    }
+    kwargs.update(overrides)
+    return write_release_bundle(bundle_dir, _real_encoder_pipeline(), **kwargs)
+
+
+def test_write_release_bundle_passes_startup_checks(tmp_path):
+    bundle_dir = tmp_path / "release"
+
+    metadata = _write_candidate(bundle_dir)
+
+    assert (bundle_dir / "release.json").is_file()
+    assert (bundle_dir / "model.joblib").is_file()
+    assert metadata["model_version"].startswith("late-risk-test.v0.")
+    assert metadata["model_sha256"] == sha256_file(bundle_dir / "model.joblib")
+    assert metadata["source_commit"] == "a" * 40
+    assert metadata["approach"] == "logistic_regression"
+    assert metadata["features"] == list(FEATURES)
+    assert metadata["feature_contract_sha256"] == FEATURE_CONTRACT_SHA256
+    assert metadata["software"]["scikit-learn"] == sklearn.__version__
+    assert metadata["cutoffs"] == {"train_end": "2017-12-31T23:59:59+00:00"}
+    assert metadata["validation"] == {"cohort_hash": "b" * 64, "n": 4}
+    assert metadata["gate"] == {"decision": "accepted", "reasons": []}
+    assert metadata["mlflow"] == {"run_id": "run-1", "experiment": "promiseops"}
+    assert metadata["data"]["last_batch_id"] == "batch-1"
+
+    bundle = load_bundle(bundle_dir)
+    assert bundle.metadata == metadata
+    assert bundle.model is not None
+
+
+@pytest.mark.parametrize("source_commit", ["short", "z" * 40])
+def test_write_release_bundle_rejects_invalid_source_commit(tmp_path, source_commit):
+    with pytest.raises(BundleError, match="source_commit"):
+        _write_candidate(tmp_path / "release", source_commit=source_commit)
+
+
+def test_write_release_bundle_rejects_empty_model_name(tmp_path):
+    with pytest.raises(BundleError, match="model_name"):
+        _write_candidate(tmp_path / "release", model_name="  ")
+
+
+def test_current_source_commit_prefers_ci_commit_sha(monkeypatch):
+    monkeypatch.setenv("CI_COMMIT_SHA", "B" * 40)
+
+    assert current_source_commit() == "b" * 40
+
+
+def test_current_source_commit_falls_back_to_git(monkeypatch):
+    monkeypatch.setenv("CI_COMMIT_SHA", "invalid")
+    monkeypatch.setattr(
+        "promiseops.release.subprocess.run",
+        lambda *args, **kwargs: SimpleNamespace(stdout="c" * 40 + "\n"),
+    )
+
+    assert current_source_commit() == "c" * 40
+
+
+def test_current_source_commit_fails_when_git_is_unavailable(monkeypatch):
+    monkeypatch.delenv("CI_COMMIT_SHA", raising=False)
+
+    def fail(*args, **kwargs):
+        raise OSError("git is unavailable")
+
+    monkeypatch.setattr("promiseops.release.subprocess.run", fail)
+
+    with pytest.raises(BundleError, match="source commit is unavailable"):
+        current_source_commit()
+
+
+def test_current_source_commit_fails_for_invalid_git_output(monkeypatch):
+    monkeypatch.delenv("CI_COMMIT_SHA", raising=False)
+    monkeypatch.setattr(
+        "promiseops.release.subprocess.run",
+        lambda *args, **kwargs: SimpleNamespace(stdout="not-a-sha"),
+    )
+
+    with pytest.raises(BundleError, match="source commit is unavailable"):
+        current_source_commit()

@@ -83,9 +83,24 @@ def _git_sha() -> str:
             text=True,
         )
     except (OSError, subprocess.SubprocessError):
-        return "0" * 40
+        raise BundleError(
+            "source commit is unavailable: set CI_COMMIT_SHA or run inside a Git checkout"
+        ) from None
     candidate = result.stdout.strip().lower()
-    return candidate if _is_commit(candidate) else "0" * 40
+    if not _is_commit(candidate):
+        raise BundleError(
+            "source commit is unavailable: set CI_COMMIT_SHA or run inside a Git checkout"
+        )
+    return candidate
+
+
+def current_source_commit() -> str:
+    """Return the 40-character commit recorded in release metadata.
+
+    Raises ``BundleError`` instead of inventing a placeholder when neither ``CI_COMMIT_SHA``
+    nor a Git checkout is available, so provenance is never silently faked.
+    """
+    return _git_sha()
 
 
 def _fixture_labels(fixtures_dir: Path) -> tuple[list[str], list[int]]:
@@ -189,6 +204,63 @@ def build_baseline_bundle(
     return metadata
 
 
+def write_release_bundle(
+    out_dir: Path | str,
+    model,
+    *,
+    model_name: str,
+    approach: str,
+    source_commit: str,
+    cutoffs: dict,
+    validation: dict | None,
+    gate: dict,
+    mlflow: dict | None = None,
+    data: dict | None = None,
+) -> dict:
+    """Write a trained candidate bundle and validate it before returning metadata."""
+    out_dir = Path(out_dir)
+    commit = source_commit.strip().lower()
+    if not _is_commit(commit):
+        raise BundleError("source_commit must be 40 lowercase hexadecimal characters")
+    if not model_name.strip():
+        raise BundleError("model_name must be non-empty")
+
+    out_dir.mkdir(parents=True, exist_ok=True)
+    model_path = out_dir / DEFAULT_MODEL_FILE
+    joblib.dump(model, model_path)
+    model_sha256 = sha256_file(model_path)
+    metadata = {
+        "schema_version": RELEASE_SCHEMA_VERSION,
+        "model_version": f"{model_name.strip()}.v0.{model_sha256[:8]}",
+        "model_file": DEFAULT_MODEL_FILE,
+        "model_sha256": model_sha256,
+        "approach": approach,
+        "features": list(FEATURES),
+        "feature_contract_sha256": FEATURE_CONTRACT_SHA256,
+        "source_commit": commit,
+        "software": {
+            "python": f"{sys.version_info.major}.{sys.version_info.minor}",
+            "scikit-learn": sklearn.__version__,
+            "pandas": pd.__version__,
+            "numpy": np.__version__,
+        },
+        "mlflow": mlflow,
+        "data": data
+        or {
+            "schema_version": "1.0",
+            "feed_as_of": None,
+            "last_batch_id": None,
+        },
+        "cutoffs": cutoffs,
+        "validation": validation,
+        "gate": gate,
+        "created_at": datetime.now(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z"),
+    }
+    (out_dir / RELEASE_FILE).write_text(json.dumps(metadata, indent=2, sort_keys=True) + "\n")
+    load_bundle(out_dir)
+    return metadata
+
+
 def _positive_probability(model: object, sample: pd.DataFrame) -> float:
     try:
         probabilities = np.asarray(model.predict_proba(sample))
@@ -268,6 +340,8 @@ __all__ = [
     "BundleError",
     "ReleaseBundle",
     "build_baseline_bundle",
+    "current_source_commit",
     "load_bundle",
     "sha256_file",
+    "write_release_bundle",
 ]
