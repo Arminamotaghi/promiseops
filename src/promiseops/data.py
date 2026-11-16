@@ -204,17 +204,20 @@ def ingest_batch(
                     )
 
             # Items
-            # Check that products not in the current batch exist in the database
-            for p_id in checked.external.product_ids:
-                cur.execute("SELECT 1 FROM products WHERE product_id = %s", (p_id,))
-                if not cur.fetchone():
-                    raise IngestRejected("missing_fk", f"missing product {p_id}")
+            # Check products and sellers using batched existence queries
+            if checked.external.product_ids:
+                cur.execute("SELECT product_id FROM products WHERE product_id = ANY(%s)", (list(checked.external.product_ids),))
+                found_products = {r[0] for r in cur.fetchall()}
+                for p_id in checked.external.product_ids:
+                    if p_id not in found_products:
+                        raise IngestRejected("missing_fk", f"missing product {p_id}")
 
-            # Check that sellers not in the current batch exist in the database
-            for s_id in checked.external.seller_ids:
-                cur.execute("SELECT 1 FROM sellers WHERE seller_id = %s", (s_id,))
-                if not cur.fetchone():
-                    raise IngestRejected("missing_fk", f"missing seller {s_id}")
+            if checked.external.seller_ids:
+                cur.execute("SELECT seller_id FROM sellers WHERE seller_id = ANY(%s)", (list(checked.external.seller_ids),))
+                found_sellers = {r[0] for r in cur.fetchall()}
+                for s_id in checked.external.seller_ids:
+                    if s_id not in found_sellers:
+                        raise IngestRejected("missing_fk", f"missing seller {s_id}")
 
             # Process and insert items
             for item in batch.items:
