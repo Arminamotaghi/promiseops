@@ -147,6 +147,9 @@ deploy-staging:
   resource_group: staging
   environment:
     name: staging
+  after_script:
+    # Output of the chart's migration Job: which SQL files ran and which tables exist.
+    - kubectl -n "$TEAM-staging" logs "job/$HELM_RELEASE-migrate" --tail=40 || true
   script:
     - !reference [.app-digest, script]
     - helm upgrade --install "$HELM_RELEASE" "$CHART_DIR" --namespace "$TEAM-staging" -f "$CHART_DIR/values-staging.yaml" --set image.repository="$CI_REGISTRY_IMAGE/app" --set image.digest="$APP_DIGEST" --set runtimeSecretName="$RUNTIME_SECRET_NAME" --atomic --wait --timeout 6m --history-max 10
@@ -179,6 +182,8 @@ deploy-prod:
     name: production
   variables:
     NAMESPACE: "$TEAM-prod"
+  after_script:
+    - kubectl -n "$NAMESPACE" logs "job/$HELM_RELEASE-migrate" --tail=40 || true
   script:
     - !reference [.approver-check, script]
     - !reference [.app-digest, script]
@@ -208,7 +213,7 @@ rollback-prod:
   script:
     - !reference [.approver-check, script]
     - echo "$ROLLBACK_DIGEST" | grep -Eq '^sha256:[0-9a-f]{64}$' || { echo "ROLLBACK_DIGEST must be sha256:<64 hex>"; exit 1; }
-    - helm upgrade --install "$HELM_RELEASE" "$CHART_DIR" --namespace "$NAMESPACE" -f "$CHART_DIR/values-prod.yaml" --set image.repository="$CI_REGISTRY_IMAGE/app" --set image.digest="$ROLLBACK_DIGEST" --set runtimeSecretName="$RUNTIME_SECRET_NAME" --atomic --wait --timeout 8m --history-max 10
+    - helm upgrade --install "$HELM_RELEASE" "$CHART_DIR" --namespace "$NAMESPACE" -f "$CHART_DIR/values-prod.yaml" --set image.repository="$CI_REGISTRY_IMAGE/app" --set image.digest="$ROLLBACK_DIGEST" --set runtimeSecretName="$RUNTIME_SECRET_NAME" --set migrations.enabled=false --atomic --wait --timeout 8m --history-max 10
     - !reference [.venv-setup, script]
     - !reference [.smoke-test, script]
     - python ci/record_deploy.py --environment production --digest "$ROLLBACK_DIGEST" --rollback --output rollback-prod.json

@@ -25,4 +25,7 @@ EXPOSE 8080
 # Immutable model bundle (read-only for the runtime user); the API loads it once at startup.
 COPY --from=build /opt/promiseops/release /opt/promiseops/release
 ENV PROMISEOPS_RELEASE_DIR=/opt/promiseops/release
+# Idempotent SQL migrations, applied by the chart's pre-upgrade Job (python -m promiseops.migrate).
+COPY sql /opt/promiseops/sql
+ENV PROMISEOPS_SQL_DIR=/opt/promiseops/sql
 ENTRYPOINT ["uvicorn", "promiseops.api:create_app", "--factory", "--host", "0.0.0.0", "--port", "8080"]
