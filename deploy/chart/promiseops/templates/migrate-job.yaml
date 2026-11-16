@@ -1,0 +1,58 @@
+{{- if .Values.migrations.enabled }}
+{{- $migrations := .Values.migrations }}
+# Applies sql/*.sql (idempotent) from the image to the team database before the new pods
+# start. If it fails, the install/upgrade fails and --atomic keeps the previous release.
+# The finished Job stays until the next deploy so its log can be read:
+#   kubectl logs job/<release>-migrate -n <namespace>
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ include "promiseops.fullname" . }}-migrate
+  labels:
+    {{- include "promiseops.labels" . | nindent 4 }}
+    app.kubernetes.io/component: migrate
+  annotations:
+    helm.sh/hook: pre-install,pre-upgrade
+    helm.sh/hook-weight: "0"
+    helm.sh/hook-delete-policy: before-hook-creation
+spec:
+  backoffLimit: 1
+  activeDeadlineSeconds: {{ $migrations.activeDeadlineSeconds }}
+  template:
+    metadata:
+      labels:
+        {{- include "promiseops.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: migrate
+    spec:
+      restartPolicy: Never
+      {{- with .Values.serviceAccountName }}
+      serviceAccountName: {{ . }}
+      {{- end }}
+      automountServiceAccountToken: false
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      securityContext:
+        {{- include "promiseops.podSecurityContext" . | nindent 8 }}
+      containers:
+        - name: migrate
+          image: {{ include "promiseops.image" . | quote }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command: ["python", "-m", "promiseops.migrate"]
+          env:
+            {{- include "promiseops.env" . | nindent 12 }}
+          envFrom:
+            {{- include "promiseops.envFrom" . | nindent 12 }}
+          resources:
+            {{- toYaml $migrations.resources | nindent 12 }}
+          securityContext:
+            {{- include "promiseops.containerSecurityContext" . | nindent 12 }}
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: tmp
+          emptyDir:
+            sizeLimit: 64Mi
+{{- end }}

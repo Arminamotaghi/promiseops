@@ -60,6 +60,19 @@ hpa:
   scaleUpStabilizationSeconds: 0
   scaleDownStabilizationSeconds: 120
 
+# Pre-install/pre-upgrade hook Job: python -m promiseops.migrate applies the idempotent
+# sql/*.sql files carried by the image. Rollback turns it off (schema is never rolled back).
+migrations:
+  enabled: true
+  activeDeadlineSeconds: 300
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: 250m
+      memory: 256Mi
+
 priorityCronJob:
   enabled: false
   schedule: "15 * * * *"

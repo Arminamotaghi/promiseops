@@ -9,3 +9,5 @@
 !fixtures/
 !fixtures/synthetic-orders.json
 !fixtures/synthetic-outcomes.json
+!sql/
+!sql/*.sql
