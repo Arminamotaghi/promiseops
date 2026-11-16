@@ -98,7 +98,9 @@ def test_apply_migrations_takes_the_lock_then_runs_each_file_once(tmp_path):
     assert applied == ["001_a.sql", "002_b.sql"]
     queries = [query for query, _ in connection.executed]
     assert "pg_advisory_lock" in queries[0]
-    assert queries[1:] == [first.read_text(), second.read_text()]
+    assert queries[1:3] == [first.read_text(), second.read_text()]
+    assert "pg_advisory_unlock" in queries[3]
+    assert len(queries) == 4
 
 
 def test_apply_migrations_names_the_failing_file(tmp_path):
@@ -110,7 +112,30 @@ def test_apply_migrations_names_the_failing_file(tmp_path):
     with pytest.raises(migrate.MigrationError, match=r"^002_b\.sql failed: syntax error"):
         migrate.apply_migrations(connection, [good, bad, never])
 
-    assert never.read_text() not in [query for query, _ in connection.executed]
+    queries = [query for query, _ in connection.executed]
+    assert never.read_text() not in queries
+    # The aborted transaction is ended before the lock is released explicitly.
+    assert queries[-2:] == ["ROLLBACK", "SELECT pg_advisory_unlock(%s)"]
+
+
+def test_apply_migrations_keeps_the_file_error_when_the_session_is_gone(tmp_path):
+    bad = _write(tmp_path, "001_a.sql", "BROKEN")
+
+    class GoneConnection(FakeConnection):
+        def cursor(self):
+            cursor = FakeCursor(self)
+            original = cursor.execute
+
+            def execute(query, params=None):
+                if query == "ROLLBACK":
+                    raise psycopg.OperationalError("the connection is closed")
+                return original(query, params)
+
+            cursor.execute = execute
+            return cursor
+
+    with pytest.raises(migrate.MigrationError, match=r"^001_a\.sql failed"):
+        migrate.apply_migrations(GoneConnection(fail_on="BROKEN"), [bad])
 
 
 def test_main_requires_the_database_url(tmp_path, monkeypatch, capsys):

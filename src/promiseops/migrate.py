@@ -8,12 +8,17 @@ chart starts it before every install and upgrade):
 Every ``*.sql`` file in the migrations directory is executed in name order. The files are
 idempotent (``CREATE ... IF NOT EXISTS``) and carry their own ``BEGIN``/``COMMIT``, so
 applying them on every deploy is safe. A session advisory lock keeps two deploys from
-running the same files at the same moment.
+running the same files at the same moment; it is released explicitly when the run ends.
+
+Schema changes are never rolled back: if file N fails, files before it stay committed while
+Helm keeps the previous pods. Every migration must therefore be additive and work with the
+code of the previous release (add tables, columns or indexes; never drop or rename).
 """
 
 from __future__ import annotations
 
 import argparse
+import contextlib
 import json
 import os
 import sys
@@ -54,13 +59,22 @@ def apply_migrations(connection, files: list[Path]) -> list[str]:
     applied = []
     with connection.cursor() as cursor:
         cursor.execute("SELECT pg_advisory_lock(%s)", (ADVISORY_LOCK_KEY,))
-        for path in files:
-            try:
-                cursor.execute(path.read_text(encoding="utf-8"))
-            except psycopg.Error as exc:
-                detail = str(exc).strip().splitlines()[0] if str(exc).strip() else type(exc).__name__
-                raise MigrationError(f"{path.name} failed: {detail}") from exc
-            applied.append(path.name)
+        try:
+            for path in files:
+                try:
+                    cursor.execute(path.read_text(encoding="utf-8"))
+                except psycopg.Error as exc:
+                    detail = str(exc).strip().splitlines()[0] if str(exc).strip() else type(exc).__name__
+                    raise MigrationError(f"{path.name} failed: {detail}") from exc
+                applied.append(path.name)
+        except BaseException:
+            # A failed file leaves its transaction open and aborted; end it so the unlock can
+            # run. If the session itself is gone, the server has already dropped the lock.
+            with contextlib.suppress(psycopg.Error):
+                cursor.execute("ROLLBACK")
+                cursor.execute("SELECT pg_advisory_unlock(%s)", (ADVISORY_LOCK_KEY,))
+            raise
+        cursor.execute("SELECT pg_advisory_unlock(%s)", (ADVISORY_LOCK_KEY,))
     return applied
 
 
@@ -91,8 +105,7 @@ def main(argv: list[str] | None = None) -> int:
 
     try:
         files = migration_files(args.dir)
-        # Closing the connection ends the session, which releases the advisory lock and
-        # discards a transaction left open by a failed file.
+        # Closing the connection ends the session as well, so the lock cannot outlive the Job.
         with psycopg.connect(connection_url(database_url), autocommit=True, connect_timeout=15) as connection:
             applied = apply_migrations(connection, files)
             tables = public_tables(connection)
