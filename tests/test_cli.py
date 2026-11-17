@@ -6,16 +6,29 @@ from promiseops.cli import main
 
 
 def test_score_priority_accepts_timezone_aware_as_of(monkeypatch, capsys):
+    import json
+    from datetime import datetime
+    from unittest.mock import Mock
+
+    expected = datetime(2018, 1, 1, tzinfo=UTC)
+    job = Mock(return_value={"scored_count": 0, "k": 0, "orders": []})
+
+    monkeypatch.setattr("promiseops.priority_job.score_priority", job)
     monkeypatch.setattr(
         "sys.argv",
         ["promiseops", "score-priority", "--as-of", "2018-01-01T00:00:00Z"],
     )
 
-    assert main() == 1
+    assert main() == 0
 
     output = capsys.readouterr()
-    assert "database and model integration are not implemented" in output.err
-    assert "2018-01-01T00:00:00+00:00" in output.err
+    assert json.loads(output.out) == {
+        "scored_count": 0,
+        "k": 0,
+        "orders": [],
+    }
+    assert output.err == ""
+    job.assert_called_once_with(as_of=expected)
 
 
 def test_score_priority_rejects_as_of_without_timezone(monkeypatch):
@@ -31,24 +44,33 @@ def test_score_priority_rejects_as_of_without_timezone(monkeypatch):
 
 
 def test_score_priority_accepts_missing_as_of(monkeypatch, capsys):
+    import json
     from datetime import datetime
+    from unittest.mock import Mock
 
     expected = datetime(2018, 9, 15, 10, 0, tzinfo=UTC)
+    job = Mock(return_value={"scored_count": 0, "k": 0, "orders": []})
 
     monkeypatch.setattr(
         "promiseops.cli.latest_released_at",
         lambda: expected,
     )
+    monkeypatch.setattr("promiseops.priority_job.score_priority", job)
     monkeypatch.setattr(
         "sys.argv",
         ["promiseops", "score-priority"],
     )
 
-    assert main() == 1
+    assert main() == 0
 
     output = capsys.readouterr()
-    assert "database and model integration are not implemented" in output.err
-    assert "as_of=2018-09-15T10:00:00+00:00" in output.err
+    assert json.loads(output.out) == {
+        "scored_count": 0,
+        "k": 0,
+        "orders": [],
+    }
+    assert output.err == ""
+    job.assert_called_once_with(as_of=expected)
 
 
 def test_latest_released_at_reads_max_order_release(monkeypatch):
@@ -198,3 +220,36 @@ def test_latest_released_at_uses_psycopg_driver(monkeypatch):
         "postgresql+psycopg://user:pass@localhost:5432/promiseops"
     )
     engine.dispose.assert_called_once()
+
+
+def test_score_priority_handles_job_failure(monkeypatch, capsys):
+    from unittest.mock import Mock
+
+    job = Mock(
+        side_effect=RuntimeError(
+            "database password=SECRET_TEST_PASSWORD"
+        )
+    )
+
+    monkeypatch.setattr(
+        "promiseops.priority_job.score_priority",
+        job,
+    )
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "promiseops",
+            "score-priority",
+            "--as-of",
+            "2018-01-01T00:00:00Z",
+        ],
+    )
+
+    assert main() == 1
+
+    output = capsys.readouterr()
+
+    assert output.out == ""
+    assert "Priority scoring failed: RuntimeError" in output.err
+    assert "SECRET_TEST_PASSWORD" not in output.err
+    job.assert_called_once()
