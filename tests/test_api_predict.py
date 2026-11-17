@@ -307,7 +307,7 @@ def test_predict_returns_409_after_insert_conflict(monkeypatch):
     connection.execute.assert_called_once()
 
 
-def test_predict_database_error_returns_safe_500(monkeypatch):
+def test_predict_database_error_returns_safe_500(monkeypatch, caplog):
     from sqlalchemy.exc import OperationalError
 
     monkeypatch.setenv("PROMISEOPS_API_KEY", "test-secret")
@@ -341,3 +341,7 @@ def test_predict_database_error_returns_safe_500(monkeypatch):
     assert response.json()["error"]["code"] == "internal_error"
     assert "private database details" not in response.text
     assert "SELECT secret" not in response.text
+    assert "exception_type=OperationalError" in caplog.text
+    assert "Predict failed" in caplog.text
+    assert "private database details" not in caplog.text
+    assert "SELECT secret" not in caplog.text
