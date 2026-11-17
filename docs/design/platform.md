@@ -43,7 +43,7 @@ rollback: rollback-prod (دستی؛ با ROLLBACK_DIGEST)
 
 GitLab رایگان protected environment ندارد. پس:
 
-1. `deploy-prod` روی main به‌صورت `when: manual` است.
+1. `deploy-prod` روی main به‌صورت `when: manual` است و به `verify-staging` همان pipeline نیاز دارد. `verify-staging` اجازهٔ شکست ندارد (`allow_failure: false`)؛ تا وقتی سبز نشده، `deploy-prod` قابل اجرا نیست.
 2. اسکریپت job بررسی می‌کند `GITLAB_USER_LOGIN == PROD_APPROVER` (فعلاً `qbc13-g07-03`). اگر کس دیگری اجرا کند، job شکست می‌خورد.
 3. `PROD_APPROVER` در `.gitlab-ci.yml` است؛ تغییرش فقط با MR و review.
 
