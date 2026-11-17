@@ -59,10 +59,11 @@
 
 دستور: `promiseops score-priority --as-of <ts>` (در `cli.py`).
 
-- **cohort:** سفارش‌هایی که `released_at` در بازهٔ `(as_of قبلی, as_of]` است و هنوز پیش‌بینی batch ندارند. سفارش‌های قدیمی دوباره «جدید» شمرده نمی‌شوند.
-- همهٔ cohort امتیاز می‌گیرد؛ K = `ceil(N/10)`. برای cohort خالی، `scored_count=0`، `k=0` و لیست خروجی خالی است.
+- **cohort:** در اجراهای بعدی، سفارش‌هایی که `released_at` در بازهٔ `(as_of قبلی, as_of]` است و هنوز پیش‌بینی batch ندارند. در اولین اجرا، فقط سفارش‌هایی انتخاب می‌شوند که `approved_at` آن‌ها در بازهٔ `(as_of - 1 day, as_of]` باشد و هنوز پیش‌بینی batch نداشته باشند.
+- همهٔ cohort امتیاز می‌گیرد؛ K = `ceil(N/10)`. برای cohort خالی، `scored_count=0`، `k=0` و لیست خروجی خالی است؛ cohort خالی ذخیره نمی‌شود.
 - مرتب‌سازی: احتمال نزولی، تساوی با `order_id` صعودی.
-- خروجی: دقیقاً شکل `contracts/priority.example.json`، در جدول `priority_runs` و در log.
+- خروجی: دقیقاً شکل `contracts/priority.example.json`؛ برای cohort غیرخالی در جدول `priority_runs` ذخیره و در log گزارش می‌شود.
+
 - اجرای دوباره با همان cohort و مدل → همان `run_id` و همان خروجی.
 - CronJob: `concurrencyPolicy: Forbid`، `activeDeadlineSeconds`، منابع 750m / 768Mi.
 

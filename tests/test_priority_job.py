@@ -849,3 +849,139 @@ def test_score_priority_rolls_back_when_persist_fails(monkeypatch):
     assert traceback is not None
 
     engine.dispose.assert_called_once()
+
+def test_score_priority_two_empty_runs_do_not_persist(monkeypatch):
+    from datetime import UTC, datetime, timedelta
+    from unittest.mock import MagicMock
+
+    from promiseops.priority_job import score_priority
+
+    connection = MagicMock()
+    engine = MagicMock()
+    engine.begin.return_value.__enter__.return_value = connection
+
+    bundle = MagicMock()
+    bundle.metadata = {"model_version": "model-v1"}
+
+    monkeypatch.setattr(
+        "promiseops.release.load_bundle",
+        lambda path: bundle,
+    )
+    monkeypatch.setattr(
+        "promiseops.api.create_database_engine",
+        lambda: engine,
+    )
+    monkeypatch.setattr(
+        "promiseops.priority_job.acquire_priority_lock",
+        lambda conn: None,
+    )
+    monkeypatch.setattr(
+        "promiseops.priority_job.get_existing_priority_run",
+        lambda conn, **kwargs: None,
+    )
+    monkeypatch.setattr(
+        "promiseops.priority_job.get_previous_as_of",
+        lambda conn, **kwargs: None,
+    )
+    monkeypatch.setattr(
+        "promiseops.priority_job.fetch_cohort",
+        lambda conn, **kwargs: [],
+    )
+    monkeypatch.setattr(
+        "promiseops.priority_job.score_cohort",
+        lambda conn, model, ids, **kwargs: [],
+    )
+
+    check_id = MagicMock()
+    predictions = MagicMock()
+    priority_run = MagicMock()
+
+    monkeypatch.setattr(
+        "promiseops.priority_job.ensure_run_id_available",
+        check_id,
+    )
+    monkeypatch.setattr(
+        "promiseops.priority_job.insert_batch_predictions",
+        predictions,
+    )
+    monkeypatch.setattr(
+        "promiseops.priority_job.insert_priority_run",
+        priority_run,
+    )
+
+    first_as_of = datetime(2026, 11, 10, tzinfo=UTC)
+    second_as_of = first_as_of + timedelta(days=1)
+
+    first = score_priority(as_of=first_as_of)
+    second = score_priority(as_of=second_as_of)
+
+    assert first["scored_count"] == 0
+    assert second["scored_count"] == 0
+    assert first["as_of"] != second["as_of"]
+
+    check_id.assert_not_called()
+    predictions.assert_not_called()
+    priority_run.assert_not_called()
+    assert engine.begin.call_count == 2
+
+def test_score_priority_normalizes_previous_as_of_to_utc(monkeypatch):
+    from datetime import UTC, datetime, timedelta, timezone
+    from unittest.mock import MagicMock
+
+    from promiseops.priority_job import score_priority
+
+    as_of = datetime(2026, 11, 10, 12, tzinfo=UTC)
+    previous = datetime(
+        2026, 11, 9, 16, 30,
+        tzinfo=timezone(timedelta(hours=2)),
+    )
+    expected_previous = datetime(2026, 11, 9, 14, 30, tzinfo=UTC)
+
+    connection = MagicMock()
+    engine = MagicMock()
+    engine.begin.return_value.__enter__.return_value = connection
+
+    bundle = MagicMock()
+    bundle.metadata = {"model_version": "model-v1"}
+
+    monkeypatch.setattr(
+        "promiseops.release.load_bundle",
+        lambda path: bundle,
+    )
+    monkeypatch.setattr(
+        "promiseops.api.create_database_engine",
+        lambda: engine,
+    )
+    monkeypatch.setattr(
+        "promiseops.priority_job.acquire_priority_lock",
+        lambda conn: None,
+    )
+    monkeypatch.setattr(
+        "promiseops.priority_job.get_existing_priority_run",
+        lambda conn, **kwargs: None,
+    )
+    monkeypatch.setattr(
+        "promiseops.priority_job.get_previous_as_of",
+        lambda conn, **kwargs: previous,
+    )
+
+    def fetch(conn, *, previous_as_of, as_of):
+        assert previous_as_of == expected_previous
+        assert previous_as_of.utcoffset() == timedelta(0)
+        return []
+
+    monkeypatch.setattr(
+        "promiseops.priority_job.fetch_cohort",
+        fetch,
+    )
+    monkeypatch.setattr(
+        "promiseops.priority_job.score_cohort",
+        lambda conn, model, order_ids, **kwargs: [],
+    )
+
+    result = score_priority(as_of=as_of)
+
+    assert result["scored_count"] == 0
+    assert result["cohort"]["id"].startswith(
+        "released:(2026-11-09T14:30:00Z,"
+    )

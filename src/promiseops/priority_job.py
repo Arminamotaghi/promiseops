@@ -1,6 +1,6 @@
 """Database-backed batch priority scoring job."""
 
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from promiseops.contracts import instant
 
@@ -34,6 +34,9 @@ def score_priority(*, as_of: datetime) -> dict:
 
             previous_as_of = get_previous_as_of(connection, as_of=as_of)
 
+            if previous_as_of is not None:
+                previous_as_of = instant(previous_as_of)
+
             order_ids = fetch_cohort(
                 connection,
                 previous_as_of=previous_as_of,
@@ -48,24 +51,35 @@ def score_priority(*, as_of: datetime) -> dict:
             )
 
             digest = cohort_hash(order_ids)
-            previous_label = (
-                previous_as_of.isoformat().replace("+00:00", "Z")
-                if previous_as_of is not None
-                else "-infinity"
-            )
             current_label = as_of.isoformat().replace("+00:00", "Z")
+
+            if previous_as_of is None:
+                first_run_start = as_of - timedelta(days=1)
+                start_label = first_run_start.isoformat().replace("+00:00", "Z")
+                cohort_id = f"approved:({start_label},{current_label}]"
+                cohort_rule = (
+                    "first run: orders with approved_at in "
+                    "(as_of - 1 day, as_of] that have no batch prediction yet"
+                )
+            else:
+                previous_label = previous_as_of.isoformat().replace("+00:00", "Z")
+                cohort_id = f"released:({previous_label},{current_label}]"
+                cohort_rule = (
+                    "orders with released_at in (previous as_of, as_of] "
+                    "that have no batch prediction yet"
+                )
 
             output = build_priority_output(
                 as_of=as_of,
-                cohort_id=f"released:({previous_label},{current_label}]",
-                cohort_rule=(
-                    "orders with released_at in (previous as_of, as_of] "
-                    "that have no batch prediction yet"
-                ),
+                cohort_id=cohort_id,
+                cohort_rule=cohort_rule,
                 cohort_hash=digest,
                 model_version=model_version,
                 scored_orders=scored_orders,
             )
+
+            if output["scored_count"] == 0:
+                return output
 
             run_id = build_run_id(digest, model_version)
             ensure_run_id_available(
@@ -89,14 +103,25 @@ def score_priority(*, as_of: datetime) -> dict:
 COHORT_SQL = """
 SELECT o.order_id
 FROM orders AS o
-WHERE (CAST(:previous_as_of AS timestamptz) IS NULL OR o.released_at > CAST(:previous_as_of AS timestamptz))
-  AND o.released_at <= :as_of
-  AND NOT EXISTS (
-      SELECT 1
-      FROM predictions AS p
-      WHERE p.order_id = o.order_id
-        AND p.source = 'batch'
-  )
+WHERE (
+    (
+        CAST(:previous_as_of AS timestamptz) IS NULL
+        AND o.approved_at > :first_run_start
+        AND o.approved_at <= :as_of
+    )
+    OR
+    (
+        CAST(:previous_as_of AS timestamptz) IS NOT NULL
+        AND o.released_at > CAST(:previous_as_of AS timestamptz)
+        AND o.released_at <= :as_of
+    )
+)
+AND NOT EXISTS (
+    SELECT 1
+    FROM predictions AS p
+    WHERE p.order_id = o.order_id
+      AND p.source = 'batch'
+)
 ORDER BY o.order_id
 """
 
@@ -116,6 +141,7 @@ def fetch_cohort(connection, *, previous_as_of: datetime | None, as_of: datetime
         text(COHORT_SQL),
         {
             "previous_as_of": previous_as_of,
+            "first_run_start": as_of - timedelta(days=1),
             "as_of": as_of,
         },
     ).scalars().all()
