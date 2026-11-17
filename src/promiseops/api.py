@@ -44,6 +44,12 @@ MODEL_INFO = Gauge(
     ["model_version"],
 )
 
+RETRAINING_REQUIRED = Gauge(
+    "promiseops_retraining_required",
+    "Whether the latest monitoring report requires model retraining",
+)
+RETRAINING_REQUIRED.set(0)
+
 
 
 def create_database_engine():
@@ -158,6 +164,29 @@ def create_app(*, model=None, database_ready=None):
         database_ready if database_ready is not None else check_database_ready
     )
 
+
+    def refresh_retraining_required_metric():
+        """Refresh the gauge from the latest monitoring report."""
+        try:
+            engine = get_database_engine()
+            with engine.connect() as connection:
+                value = connection.execute(
+                    text(
+                        """
+                        SELECT retraining_required
+                        FROM monitoring_reports
+                        ORDER BY as_of DESC, report_id DESC
+                        LIMIT 1
+                        """
+                    )
+                ).scalar_one_or_none()
+        except (SQLAlchemyError, OSError, ValueError):
+            # Preserve the last known value on database failure.
+            return
+
+        RETRAINING_REQUIRED.set(1 if value is True else 0)
+
+
     @app.middleware("http")
     async def check_api_key(request: Request, call_next):
         started = time.perf_counter()
@@ -209,6 +238,7 @@ def create_app(*, model=None, database_ready=None):
 
     @app.get("/metrics")
     def metrics():
+        refresh_retraining_required_metric()
         return Response(
             generate_latest(),
             media_type=CONTENT_TYPE_LATEST,
