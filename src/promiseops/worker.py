@@ -6,12 +6,12 @@ import argparse
 import json
 import os
 import shutil
-import sys
 from datetime import datetime
 from pathlib import Path
 
 import numpy as np
-from sqlalchemy import create_engine
+import pandas as pd
+from sqlalchemy import create_engine, text
 
 from promiseops.contracts import instant
 from promiseops.features import FEATURES, build_features
@@ -21,8 +21,10 @@ from promiseops.model import (
     EvaluationMetrics,
     compare_candidate,
     evaluate_predictions,
+    load_training_frames,
     train_candidate,
 )
+from promiseops.monitor import FEATURE_WINDOW, LABEL_WINDOW, build_report
 from promiseops.release import (
     RELEASE_FILE,
     BundleError,
@@ -314,6 +316,169 @@ def run_train(
     return metadata
 
 
+def _load_monitor_inputs(
+    connection,
+    *,
+    as_of: datetime,
+    train_end: datetime,
+    validation_end: datetime,
+    out_dir: Path,
+) -> tuple[pd.DataFrame, pd.DataFrame, dict, pd.DataFrame, pd.DataFrame]:
+    label_start = as_of - LABEL_WINDOW
+    current_start = as_of - FEATURE_WINDOW
+    previous_start = as_of - 2 * FEATURE_WINDOW
+    rows = connection.execute(
+        text(
+            """
+            SELECT order_id, risk_probability, model_version, created_at
+            FROM predictions
+            WHERE created_at > :start AND created_at <= :as_of
+            ORDER BY order_id, created_at
+            """
+        ),
+        {"start": label_start, "as_of": as_of},
+    ).mappings().all()
+    predictions = pd.DataFrame(
+        [dict(row) for row in rows],
+        columns=["order_id", "risk_probability", "model_version", "created_at"],
+    )
+    if not predictions.empty:
+        predictions["created_at"] = pd.to_datetime(predictions["created_at"], utc=True)
+        current_ids = sorted(
+            set(predictions.loc[predictions["created_at"] > current_start, "order_id"])
+        )
+        previous_ids = sorted(
+            set(
+                predictions.loc[
+                    (predictions["created_at"] > previous_start)
+                    & (predictions["created_at"] <= current_start),
+                    "order_id",
+                ]
+            )
+        )
+    else:
+        current_ids = []
+        previous_ids = []
+
+    label_ids = sorted(set(predictions["order_id"])) if not predictions.empty else []
+    current_features = build_features(connection, current_ids, as_of=as_of)
+    previous_features = build_features(connection, previous_ids, as_of=as_of)
+    mature_labels = build_features(connection, label_ids, as_of=as_of, labeled=True)
+
+    incumbent = _load_incumbent(out_dir)
+    reference_features = pd.DataFrame(columns=list(FEATURES))
+    try:
+        _, validation = load_training_frames(
+            connection,
+            train_end=train_end,
+            validation_end=validation_end,
+            as_of=as_of,
+        )
+        reference_features = validation[list(FEATURES)]
+    except ValueError:
+        pass
+
+    reference = {
+        "metrics": incumbent.metadata.get("validation") if incumbent else None,
+        "features": reference_features,
+        "model_version": incumbent.metadata["model_version"] if incumbent else None,
+    }
+    return (
+        predictions,
+        mature_labels,
+        reference,
+        current_features,
+        previous_features,
+    )
+
+
+def _write_monitor_report(connection, report: dict) -> None:
+    connection.execute(
+        text(
+            """
+            INSERT INTO monitoring_reports (
+                as_of, model_version,
+                feature_window_start, feature_window_end,
+                label_window_start, label_window_end,
+                unique_orders, mature_orders, late_orders,
+                drift_psi, categorical_tvd, persistent_drift,
+                recall_at_10, precision_at_10, average_precision, brier,
+                retraining_required, reasons
+            ) VALUES (
+                :as_of, :model_version,
+                :feature_window_start, :feature_window_end,
+                :label_window_start, :label_window_end,
+                :unique_orders, :mature_orders, :late_orders,
+                CAST(:drift_psi AS jsonb), CAST(:categorical_tvd AS jsonb), :persistent_drift,
+                :recall_at_10, :precision_at_10, :average_precision, :brier,
+                :retraining_required, CAST(:reasons AS jsonb)
+            )
+            ON CONFLICT (model_version, as_of) DO NOTHING
+            """
+        ),
+        {
+            "as_of": report["as_of"],
+            "model_version": report["model_version"],
+            "feature_window_start": report["feature_window_start"],
+            "feature_window_end": report["feature_window_end"],
+            "label_window_start": report["label_window_start"],
+            "label_window_end": report["label_window_end"],
+            "unique_orders": report["unique_orders"],
+            "mature_orders": report["mature_orders"],
+            "late_orders": report["late_orders"],
+            "drift_psi": json.dumps(report["drift_psi"], sort_keys=True),
+            "categorical_tvd": json.dumps(report["categorical_tvd"], sort_keys=True),
+            "persistent_drift": report["persistent_drift"],
+            "recall_at_10": report["recall_at_10"],
+            "precision_at_10": report["precision_at_10"],
+            "average_precision": report["average_precision"],
+            "brier": report["brier"],
+            "retraining_required": report["retraining_required"],
+            "reasons": json.dumps(report["reasons"], sort_keys=True),
+        },
+    )
+    connection.commit()
+
+
+def monitor_train(
+    connection,
+    *,
+    train_end: datetime,
+    validation_end: datetime,
+    as_of: datetime,
+    out_dir: Path | str,
+    mlflow_module=None,
+) -> dict:
+    """Persist a monitoring report and run the train path only when it recommends retraining."""
+    out_dir = Path(out_dir)
+    predictions, labels, reference, current, previous = _load_monitor_inputs(
+        connection,
+        as_of=as_of,
+        train_end=train_end,
+        validation_end=validation_end,
+        out_dir=out_dir,
+    )
+    report = build_report(
+        predictions,
+        labels,
+        reference,
+        as_of=as_of,
+        current_features=current,
+        previous_features=previous,
+    )
+    _write_monitor_report(connection, report)
+    if report["retraining_required"]:
+        run_train(
+            connection,
+            train_end=train_end,
+            validation_end=validation_end,
+            as_of=as_of,
+            out_dir=out_dir,
+            mlflow_module=mlflow_module,
+        )
+    return report
+
+
 def _database_url() -> str:
     url = os.environ.get("PROMISEOPS_DATABASE_URL")
     if not url:
@@ -338,30 +503,32 @@ def main(argv: list[str] | None = None) -> int:
         parser.add_argument("--" + name, required=True)
     args = parser.parse_args(argv)
 
-    if args.mode != "train":
-        print(
-            "monitor-train is not implemented yet (Issue #13); refusing to report success",
-            file=sys.stderr,
-        )
-        return 2
-
     train_end = instant(args.train_end)
     validation_end = instant(args.validation_end)
     as_of = instant(args.as_of)
     engine = create_engine(_database_url())
     try:
         with engine.connect() as connection:
-            metadata = run_train(
-                connection,
-                train_end=train_end,
-                validation_end=validation_end,
-                as_of=as_of,
-                out_dir=_release_dir(),
-            )
+            if args.mode == "train":
+                result = run_train(
+                    connection,
+                    train_end=train_end,
+                    validation_end=validation_end,
+                    as_of=as_of,
+                    out_dir=_release_dir(),
+                )
+            else:
+                result = monitor_train(
+                    connection,
+                    train_end=train_end,
+                    validation_end=validation_end,
+                    as_of=as_of,
+                    out_dir=_release_dir(),
+                )
     finally:
         engine.dispose()
 
-    print(json.dumps(metadata, indent=2, sort_keys=True))
+    print(json.dumps(result, indent=2, sort_keys=True, default=str))
     return 0
 
 
