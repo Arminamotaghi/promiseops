@@ -1,0 +1,183 @@
+apiVersion: 1
+groups:
+    - orgId: 1
+      name: promiseops-alerts
+      folder: PromiseOps
+      interval: 1m
+      rules:
+        - uid: cg4ldzkuqgr9cd
+          title: PromiseOpsModelNotReady
+          condition: C
+          data:
+            - refId: A
+              relativeTimeRange:
+                from: 600
+                to: 0
+              datasourceUid: PBAB629F371D08AFE
+              model:
+                editorMode: code
+                expr: promiseops_model_ready
+                instant: true
+                intervalMs: 1000
+                legendFormat: __auto
+                maxDataPoints: 43200
+                range: false
+                refId: A
+            - refId: C
+              queryType: expression
+              datasourceUid: __expr__
+              model:
+                conditions:
+                    - evaluator:
+                        params:
+                            - 1
+                        type: lt
+                      operator:
+                        type: and
+                      query:
+                        params:
+                            - C
+                      reducer:
+                        params: []
+                        type: last
+                      type: query
+                datasource:
+                    type: __expr__
+                    uid: __expr__
+                expression: A
+                intervalMs: 1000
+                maxDataPoints: 43200
+                refId: C
+                type: threshold
+          noDataState: NoData
+          execErrState: Error
+          for: 2m
+          annotations:
+            description: The PromiseOps model readiness metric is below 1 for at least 2 minutes. Check model loading, application logs, and the /readyz endpoint.
+            summary: PromiseOps model is not ready
+          labels:
+            severity: warning
+          isPaused: false
+          notification_settings:
+            receiver: empty
+        - uid: dg4ledw8zquiof
+          title: PromiseOpsHigh5xxRate
+          condition: C
+          data:
+            - refId: A
+              relativeTimeRange:
+                from: 600
+                to: 0
+              datasourceUid: PBAB629F371D08AFE
+              model:
+                editorMode: code
+                expr: |-
+                    (
+                      sum(rate(promiseops_http_requests_total{status=~"5.."}[5m]))
+                      /
+                      clamp_min(sum(rate(promiseops_http_requests_total[5m])), 1e-9)
+                    )
+                instant: true
+                intervalMs: 1000
+                legendFormat: __auto
+                maxDataPoints: 43200
+                range: false
+                refId: A
+            - refId: C
+              queryType: expression
+              datasourceUid: __expr__
+              model:
+                conditions:
+                    - evaluator:
+                        params:
+                            - 0.01
+                        type: gt
+                      operator:
+                        type: and
+                      query:
+                        params:
+                            - C
+                      reducer:
+                        params: []
+                        type: last
+                      type: query
+                datasource:
+                    type: __expr__
+                    uid: __expr__
+                expression: A
+                intervalMs: 1000
+                maxDataPoints: 43200
+                refId: C
+                type: threshold
+          noDataState: NoData
+          execErrState: Error
+          for: 5m
+          annotations:
+            description: More than 1% of HTTP requests have returned 5xx responses for at least 5 minutes. Check application logs, API health, and recent deployments.
+            summary: PromiseOps HTTP 5xx error rate is above 1%
+          labels:
+            severity: warning
+          isPaused: false
+          notification_settings:
+            receiver: empty
+        - uid: eg4lfiiwjbu2od
+          title: PromiseOpsHighP95Latency
+          condition: C
+          data:
+            - refId: A
+              relativeTimeRange:
+                from: 600
+                to: 0
+              datasourceUid: PBAB629F371D08AFE
+              model:
+                editorMode: code
+                expr: |-
+                    histogram_quantile(
+                      0.95,
+                      sum by (le) (
+                        rate(promiseops_http_request_duration_seconds_bucket[5m])
+                      )
+                    )
+                instant: true
+                intervalMs: 1000
+                legendFormat: __auto
+                maxDataPoints: 43200
+                range: false
+                refId: A
+            - refId: C
+              queryType: expression
+              datasourceUid: __expr__
+              model:
+                conditions:
+                    - evaluator:
+                        params:
+                            - 0.5
+                        type: gt
+                      operator:
+                        type: and
+                      query:
+                        params:
+                            - C
+                      reducer:
+                        params: []
+                        type: last
+                      type: query
+                datasource:
+                    type: __expr__
+                    uid: __expr__
+                expression: A
+                intervalMs: 1000
+                maxDataPoints: 43200
+                refId: C
+                type: threshold
+          noDataState: NoData
+          execErrState: Error
+          for: 5m
+          annotations:
+            description: The 95th percentile of API request duration has exceeded 0.5 seconds for at least 5 minutes. Check API performance, database latency, and recent deployments.
+            summary: PromiseOps P95 API latency exceeds 500ms
+          labels:
+            severity: warning
+          isPaused: false
+          notification_settings:
+            receiver: empty
