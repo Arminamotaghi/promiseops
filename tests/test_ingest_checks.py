@@ -1,9 +1,11 @@
 import copy
 import hashlib
 import json
-from pathlib import Path
-
 import pytest
+import httpx
+
+from pathlib import Path
+from promiseops.gateway import get_feed_index, download_feed_file
 
 from promiseops.contracts import Batch, digest
 from promiseops.ingest_checks import (
@@ -186,3 +188,28 @@ def test_reason_codes_fit_the_quarantine_constraint():
     assert all(3 <= len(code) <= 64 and code.replace("_", "").isalnum() and code.islower() for code in REASON_CODES)
     with pytest.raises(ValueError):
         IngestRejected("made_up_code", "x")
+
+# Gateway Tests
+
+def test_get_feed_index_success():
+    transport = httpx.MockTransport(lambda req: httpx.Response(200, json={"entries": []}))
+    assert get_feed_index("http://a", "k", transport=transport) == {"entries": []}
+
+def test_get_feed_index_unauthorized():
+    transport = httpx.MockTransport(lambda req: httpx.Response(401))
+    with pytest.raises(httpx.HTTPStatusError):
+        get_feed_index("http://a", "k", transport=transport)
+
+def test_download_feed_file_not_found():
+    transport = httpx.MockTransport(lambda req: httpx.Response(404))
+    with pytest.raises(httpx.HTTPStatusError):
+        download_feed_file("http://a", "k", "f", "s1", "s2", transport=transport)
+
+def test_download_feed_file_passes_expected_checksums():
+    transport = httpx.MockTransport(lambda req: httpx.Response(200, content=b"data"))
+    content, s1, s2 = download_feed_file(
+        "http://a", "k", "f", "expected_sha", "expected_payload", transport=transport
+    )
+    assert content == b"data"
+    assert s1 == "expected_sha"
+    assert s2 == "expected_payload"

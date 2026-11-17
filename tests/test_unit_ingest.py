@@ -241,16 +241,17 @@ def test_item_missing_external_product_raises_and_quarantines():
 
     conn = FakeConnection()
     conn.fetchone_queue = [
-        None,  # no prior receipt
+        None,  # receipt
         None,  # customer dimension
         None,  # seller dimension
         None,  # order lookup
         (1,),  # customer FK for the order
-        None,  # item lookup
-        (1,),  # order FK for the item
-        None,  # product p1 is missing
     ]
-    conn.fetchall_queue = [[]]  # no preexisting child orders
+    # Expectation: First is for child orders, second is the new batched product lookup
+    conn.fetchall_queue = [
+        [],  # no preexisting child orders
+        [],  # no existing products (missing_fk triggers)
+    ]
 
     with pytest.raises(ValueError, match="^missing_fk$"):
         ingest_batch(
