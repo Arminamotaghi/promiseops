@@ -24,6 +24,7 @@ from __future__ import annotations
 import hashlib
 import os
 import re
+import sys
 from datetime import datetime, timezone
 
 import httpx
@@ -126,6 +127,11 @@ def submit_training(
         raise TrainingSubmitError("gateway answered 202 without a JSON body") from None
     if not isinstance(answer, dict):
         raise TrainingSubmitError("gateway answered 202 with an unexpected body")
+    # The contract says the 202 body names the Job and our jobs namespace but not the field
+    # names. The request is already accepted at this point, so a different shape is reported,
+    # not raised: raising would make Airflow retry an accepted submission.
+    if not any(key in answer for key in ("job", "job_name", "name")) or "namespace" not in answer:
+        print(f"warning: 202 without the expected Job name/namespace fields; gateway answered: {answer}", file=sys.stderr)
     return answer
 
 

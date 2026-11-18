@@ -101,3 +101,16 @@ def test_submit_from_env(monkeypatch):
         tc.submit_from_env(request(), transport=gateway())
     monkeypatch.setenv("COMPANY_FEED_KEY", KEY)
     assert tc.submit_from_env(request(), transport=gateway())["namespace"] == "g07-jobs"
+
+
+@pytest.mark.parametrize("body", [{}, {"accepted": True}, {"job": "train-x"}])
+def test_accepted_202_with_an_unexpected_body_is_returned_with_a_warning(body, capsys):
+    # Accepted already: raising here would make Airflow retry an accepted submission.
+    assert tc.submit_training("http://gw", KEY, request(), transport=gateway(202, body)) == body
+    assert "warning: 202 without the expected Job name/namespace fields" in capsys.readouterr().err
+
+
+def test_202_with_job_and_namespace_prints_no_warning(capsys):
+    tc.submit_training("http://gw", KEY, request(), transport=gateway(202, {"job_name": "train-x", "namespace": "g07-jobs"}))
+    assert capsys.readouterr().err == ""
+
