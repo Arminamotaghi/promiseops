@@ -272,3 +272,79 @@ probe-mlflow:
           print("MLflow is not reachable from this runner:", type(exc).__name__)
           sys.exit(1)
       PY
+
+# Manual and read-only: do staging and prod share one database (compared by hash, the URL is
+# never printed)? Does this runner reach it? Prints row counts per table, quarantine reasons
+# and one released order ID that can serve as SMOKE_ORDER_ID. Never prints row contents.
+probe-database:
+  needs: []
+  stage: build
+  rules:
+    - if: '$CI_COMMIT_REF_PROTECTED == "true"'
+      when: manual
+  allow_failure: true
+  script:
+    - |
+      for area in staging prod; do
+        value="$(kubectl -n "$TEAM-$area" get secret "$RUNTIME_SECRET_NAME" -o jsonpath='{.data.PROMISEOPS_DATABASE_URL}' || true)"
+        if [ -n "$value" ]; then printf '%s' "$value" | sha256sum | cut -c1-64 > "db-$area.sha"; else echo "$area: database URL not readable"; fi
+      done
+      if [ -s db-staging.sha ] && [ -s db-prod.sha ]; then
+        if cmp -s db-staging.sha db-prod.sha; then echo "staging and prod: SAME database"; else echo "staging and prod: DIFFERENT databases"; fi
+      fi
+      rm -f db-staging.sha db-prod.sha
+    - !reference [.venv-setup, script]
+    - |
+      PROMISEOPS_DATABASE_URL="$(kubectl -n "$TEAM-staging" get secret "$RUNTIME_SECRET_NAME" -o jsonpath='{.data.PROMISEOPS_DATABASE_URL}' | base64 -d)"
+      test -n "$PROMISEOPS_DATABASE_URL"
+      export PROMISEOPS_DATABASE_URL
+    - |
+      .venv/bin/python - <<'PY'
+      import os, sys
+      import psycopg
+      url = os.environ["PROMISEOPS_DATABASE_URL"]
+      for prefix in ("postgresql+psycopg://", "postgresql+psycopg2://", "postgres://"):
+          if url.startswith(prefix):
+              url = "postgresql://" + url[len(prefix):]
+      try:
+          conn = psycopg.connect(url, connect_timeout=15)
+      except psycopg.Error as exc:
+          print("database is not reachable from this runner:", type(exc).__name__)
+          sys.exit(1)
+      with conn:
+          tables = [row[0] for row in conn.execute(
+              "SELECT table_name FROM information_schema.tables "
+              "WHERE table_schema = 'public' ORDER BY table_name")]
+          for table in tables:
+              count = conn.execute(f'SELECT count(*) FROM "{table}"').fetchone()[0]
+              print(f"{table}: {count}")
+          if "quarantine" in tables:
+              for reason, count in conn.execute(
+                      "SELECT reason_code, count(*) FROM quarantine GROUP BY 1 ORDER BY 1"):
+                  print(f"quarantine {reason}: {count}")
+          if "orders" in tables:
+              row = conn.execute(
+                  "SELECT o.order_id, o.released_at FROM orders o "
+                  "WHERE EXISTS (SELECT 1 FROM items i WHERE i.order_id = o.order_id) "
+                  "ORDER BY o.released_at DESC, o.order_id DESC LIMIT 1").fetchone()
+              print("smoke order candidate:", row[0] if row else "none", "| released_at:", row[1] if row else "-")
+      PY
+
+# Airflow has no git-sync: it reads DAG files from ConfigMap team-dags in $TEAM-platform and
+# puts /opt/airflow/team-code (ConfigMap team-code) on sys.path. This job writes dags/*.py and
+# src/promiseops (as promiseops.zip) there; the staff README key is never touched
+# (ci/airflow_sync.py). Manual and main only, so Airflow runs reviewed code. The DAG, or its
+# import error, shows up in the Airflow UI a few minutes later; then run promiseops_env_check.
+airflow-sync:
+  needs: []
+  stage: build
+  rules:
+    - if: '$ROLLBACK_DIGEST'
+      when: never
+    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH && $CI_COMMIT_REF_PROTECTED == "true"'
+      when: manual
+  allow_failure: true
+  resource_group: airflow-sync
+  script:
+    - python -m py_compile dags/*.py
+    - python ci/airflow_sync.py --namespace "$TEAM-platform" --commit "$CI_COMMIT_SHA"
