@@ -37,11 +37,11 @@ API فقط یک بار، هنگام شروع، `/opt/promiseops/release` را م
 1. **worker** (Job صف‌دار) مدل‌ها را آموزش می‌دهد، با champion روی همان `cohort_hash` مقایسه می‌کند، bundle را در artifacts همان run در MLflow ذخیره و نسخه را register می‌کند. gate رد شد؟ همین نتیجه ثبت می‌شود و کار تمام است.
 2. **تأیید انسانی = MR.** حسن یک MR باز می‌کند که فقط `release/pin.json` را عوض می‌کند:
    ```json
-   {"model_version": "late-risk-hgb.v3.4f2a91c0", "mlflow_run_id": "a1b2c3d4e5f6", "model_sha256": "4f2a91c0..."}
+   {"model_version": "late-risk-hist_gradient_boosting.v3.4f2a91c0", "mlflow_run_id": "<32 hex>", "model_sha256": "<64 hex>"}
    ```
-   review و merge این MR، تأیید انتشار مدل است و در تاریخچهٔ Git می‌ماند.
-3. **CI روی main:** job `fetch-release` bundle را از run مشخص (نه alias) دانلود می‌کند، sha256 را با pin مقایسه می‌کند، و `build-own-image` آن را در `release/` قرار می‌دهد. خروجی: digest تغییرناپذیر image.
-   - اگر runner به MLflow دسترسی ندارد (سؤال باز از علیرضا)، طرح جایگزین: خود bundle در MR commit شود (`model.joblib` کوچک است) و CI فقط hash را بررسی کند.
+   review و merge این MR، تأیید انتشار مدل است و در تاریخچهٔ Git می‌ماند. سه مقدار از `release.json` همان run در MLflow برداشته می‌شوند (`release/README.md`).
+3. **CI روی main:** job `fetch-release` (فقط وقتی `release/pin.json` هست) با `python -m promiseops.pin fetch` پوشهٔ `bundle/` را از run مشخص (نه alias) در `release/bundle/` دانلود می‌کند و آن را با همان بررسی‌های startup (`load_bundle`) و با pin می‌سنجد: `model_version`، `model_sha256`، `mlflow.run_id` برابر pin و `gate.decision == "accepted"`. candidate رد شده یا bundle راه‌انداز هرگز منتشر نمی‌شود. `build-own-image` همین بررسی را با Python و scikit-learn خود image تکرار می‌کند (`python -m promiseops.pin check`) و bundle را در `/opt/promiseops/release` می‌گذارد؛ اگر pin هست و bundle نیست یا فرق دارد، build شکست می‌خورد. بدون pin، image همان bundle راه‌انداز را می‌سازد. خروجی: digest تغییرناپذیر image.
+   - runner به MLflow گروه می‌رسد (pipeline ‏#567) و آدرس را از secret ‏`runtime-config` در staging می‌خواند؛ bundle در Git commit نمی‌شود.
 4. **build worker** از همان digest image سرویس (incumbent bundle داخلش است).
 5. **staging:** `helm upgrade` با `image.digest=sha256:...` ← `acceptance/live_api.py` روی staging.
 6. **production:** job دستی (`when: manual`) روی main؛ فقط حسن اجرا می‌کند. نام تأییدکننده (`GITLAB_USER_LOGIN`) و digest در artifact ثبت می‌شود.
@@ -59,5 +59,4 @@ API فقط یک بار، هنگام شروع، `/opt/promiseops/release` را م
 
 ## سؤال‌های باز برای MR
 
-- آیا `pin.json` و bundle در `release/` commit شوند یا فقط pin؟ (بستگی به جواب علیرضا)
 - مسئول اجرای job دستی production: فقط حسن، یا حسن + یک نفر جایگزین؟

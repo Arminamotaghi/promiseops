@@ -11,3 +11,4 @@ tracking-wheelhouse/
 .pytest_cache/
 release/model.joblib
 release/release.json
+release/bundle/

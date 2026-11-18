@@ -11,12 +11,19 @@ COPY wheelhouse /wheelhouse
 RUN --network=none uv venv --python /usr/local/bin/python /opt/venv && uv pip sync --python /opt/venv/bin/python --no-index --find-links /wheelhouse --require-hashes requirements.lock
 COPY src ./src
 RUN --network=none uv pip install --python /opt/venv/bin/python --no-index --no-deps --no-build-isolation .
-# Bootstrap model bundle, built with the image's own Python and scikit-learn so the
-# startup checks (sha256, features, library versions) always match. Replaced by the
-# reviewed, pinned trained bundle once one exists (docs/design/release.md).
+# Model bundle. With release/pin.json, the reviewed trained bundle that CI job fetch-release
+# downloaded to release/bundle is checked again here with the image's own Python and
+# scikit-learn; a missing or different bundle fails the build. Without a pin, a bootstrap
+# bundle is built from the fixtures (docs/design/release.md).
 ARG SOURCE_COMMIT
 COPY fixtures/synthetic-orders.json fixtures/synthetic-outcomes.json ./fixtures/
-RUN --network=none CI_COMMIT_SHA="${SOURCE_COMMIT}" /opt/venv/bin/promiseops make-baseline --out /opt/promiseops/release --fixtures fixtures
+COPY release ./release
+RUN --network=none if [ -f release/pin.json ]; then \
+        /opt/venv/bin/python -m promiseops.pin check --pin release/pin.json --bundle release/bundle \
+        && mkdir -p /opt/promiseops && cp -r release/bundle /opt/promiseops/release; \
+    else \
+        CI_COMMIT_SHA="${SOURCE_COMMIT}" /opt/venv/bin/promiseops make-baseline --out /opt/promiseops/release --fixtures fixtures; \
+    fi
 FROM ${BASE_IMAGE}
 COPY --from=build /opt/venv /opt/venv
 ENV PATH=/opt/venv/bin:$PATH PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 MKL_NUM_THREADS=1
