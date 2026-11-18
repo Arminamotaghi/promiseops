@@ -26,7 +26,7 @@
       },
       "datasource": {
         "type": "prometheus",
-        "uid": "${DS_PROMETHEUS}"
+        "uid": "PBAB629F371D08AFE"
       },
       "targets": [
         {
@@ -48,7 +48,7 @@
       },
       "datasource": {
         "type": "prometheus",
-        "uid": "${DS_PROMETHEUS}"
+        "uid": "PBAB629F371D08AFE"
       },
       "fieldConfig": {
         "defaults": {
@@ -76,7 +76,7 @@
       },
       "datasource": {
         "type": "prometheus",
-        "uid": "${DS_PROMETHEUS}"
+        "uid": "PBAB629F371D08AFE"
       },
       "fieldConfig": {
         "defaults": {
@@ -104,7 +104,7 @@
       },
       "datasource": {
         "type": "prometheus",
-        "uid": "${DS_PROMETHEUS}"
+        "uid": "PBAB629F371D08AFE"
       },
       "fieldConfig": {
         "defaults": {
@@ -147,13 +147,60 @@
       },
       "datasource": {
         "type": "prometheus",
-        "uid": "${DS_PROMETHEUS}"
+        "uid": "PBAB629F371D08AFE"
       },
       "targets": [
         {
           "expr": "promiseops_model_info",
           "legendFormat": "{{model_version}}",
           "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 6,
+      "title": "Retraining Required",
+      "type": "stat",
+      "gridPos": {
+        "h": 8,
+        "w": 6,
+        "x": 0,
+        "y": 16
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "PBAB629F371D08AFE"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "min": 0,
+          "max": 1,
+          "mappings": [
+            {
+              "type": "value",
+              "options": {
+                "0": {
+                  "text": "NOT READY",
+                  "color": "red"
+                },
+                "1": {
+                  "text": "READY",
+                  "color": "green"
+                }
+              }
+            }
+          ]
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "expr": "promiseops_retraining_required",
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "PBAB629F371D08AFE"
+          }
         }
       ]
     }
