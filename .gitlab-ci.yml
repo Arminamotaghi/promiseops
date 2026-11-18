@@ -17,7 +17,7 @@ variables:
   # Staff-provided secret in staging/prod with the runtime configuration (DB URL, API key).
   RUNTIME_SECRET_NAME: runtime-config
   # TODO(data): one released order ID used by the smoke test (not a secret).
-  SMOKE_ORDER_ID: TODO-order-id
+  SMOKE_ORDER_ID: feeaaeb6a99fc794212a29c84e6d527e  # released 2018-09-10; probe-database, 27 Aban
   # Staging deploys are manual until the runtime secret name is known and the image carries a
   # model bundle (otherwise /readyz is 503 and every main pipeline would fail). Then set "true".
   STAGING_AUTO_DEPLOY: "false"
@@ -99,6 +99,29 @@ chart-lint:
       done
   artifacts:
     paths: [rendered-staging.yaml, rendered-prod.yaml]
+    expire_in: 1 week
+
+# Pinned trained model (release/pin.json, docs/design/release.md). Runs in the test stage so
+# build-own-image receives release/bundle/ as an artifact; if it fails, no image is built.
+fetch-release:
+  stage: test
+  rules:
+    - if: '$ROLLBACK_DIGEST'
+      when: never
+    - if: '$CI_COMMIT_REF_PROTECTED == "true"'
+      exists: [release/pin.json]
+  script:
+    - !reference [.venv-setup, script]
+    - cp -a /opt/promiseops/tracking-wheelhouse ./tracking-wheelhouse
+    - uv pip install --python .venv/bin/python --no-index --find-links tracking-wheelhouse --require-hashes -r requirements-tracking.lock
+    - uv pip install --python .venv/bin/python --no-index --no-deps --no-build-isolation .
+    - |
+      MLFLOW_TRACKING_URI="$(kubectl -n "$TEAM-staging" get secret "$RUNTIME_SECRET_NAME" -o jsonpath='{.data.MLFLOW_TRACKING_URI}' | base64 -d)"
+      test -n "$MLFLOW_TRACKING_URI"
+      export MLFLOW_TRACKING_URI
+    - MLFLOW_DISABLE_TELEMETRY=true .venv/bin/python -m promiseops.pin fetch --pin release/pin.json --bundle release/bundle
+  artifacts:
+    paths: [release/bundle/]
     expire_in: 1 week
 
 # ---------- build ----------
