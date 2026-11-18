@@ -37,6 +37,7 @@ cells are filled and the raw result is linked. Rows marked `pending` have not be
 
 | ID | Behavior | Commit | Image digest | Model version | Company clock/cohort | Command and result |
 |---|---|---|---|---|---|---|
+| O0 | Airflow worker pre-flight (`promiseops_env_check` after `airflow-sync`): four settings present, gateway, database and MLflow reachable, `promiseops` imports from `team-code` | pending | n/a | n/a | n/a | pending |
 | O1 | Ingestion DAG run for a chosen `as_of`; retry of the same run is a no-op | pending | n/a | n/a | pending | pending |
 | O2 | Training DAG submits the queued Job (202, Job name, final status) | pending | pending | pending | pending | pending |
 | O3 | Lineage in MLflow: artifact SHA256, commit, cutoffs, cohort hash, metrics, gate | pending | n/a | pending | pending | pending |
@@ -49,7 +50,7 @@ cells are filled and the raw result is linked. Rows marked `pending` have not be
 | A1 | Live contract check: probes, 401 without key, prediction, metrics | pending | pending | pending | pending | pending |
 | A2 | Repeated request ID returns the original result; other order gives 409 | pending | pending | pending | pending | pending |
 | A3 | Unknown order 404, invalid input 422 | pending | pending | pending | pending | pending |
-| A4 | Batch priority output: cohort, scored count, top 10% | pending | pending | pending | pending | pending |
+| A4 | Batch priority (`score-priority`): cohort, scored count and top 10% stored as one `priority_runs` row; a rerun with the same `as_of` returns the same run and adds no row; output shape as `contracts/priority.example.json` | pending | pending | pending | pending | pending |
 
 ## Kubernetes and CI
 
@@ -70,9 +71,10 @@ cells are filled and the raw result is linked. Rows marked `pending` have not be
 | ID | Behavior | Commit | Image digest | Model version | Company clock/cohort | Command and result |
 |---|---|---|---|---|---|---|
 | P1 | Dashboard shows traffic, errors, latency and model readiness | pending | pending | pending | n/a | pending |
-| P2 | `APIUnavailable` fires before production is scraped and resolves once `up{job="g07-production"}` is 1 for every replica | pending | pending | pending | n/a | pending |
+| P2 | `APIUnavailable` fires while production has no ready pod (screenshot 23 Aban, before the first deploy) and returns to Normal in Grafana after `deploy-prod`; the rule expression is the platform's | pending | pending | pending | n/a | pending |
 | P3 | Drift report over two nonoverlapping windows | pending | n/a | pending | pending | pending |
 | P4 | Delayed-label evaluation and the retraining recommendation with reasons and counts | pending | n/a | pending | pending | pending |
+| P5 | Team Grafana-managed alerts (`monitoring/grafana/alert-rules.yaml`) evaluate on production data: Normal under normal traffic, firing when the condition is forced | pending | pending | pending | n/a | pending |
 
 ## Incident drill and handover
 
