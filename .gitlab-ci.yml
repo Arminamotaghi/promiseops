@@ -101,29 +101,6 @@ chart-lint:
     paths: [rendered-staging.yaml, rendered-prod.yaml]
     expire_in: 1 week
 
-# Pinned trained model (release/pin.json, docs/design/release.md). Runs in the test stage so
-# build-own-image receives release/bundle/ as an artifact; if it fails, no image is built.
-fetch-release:
-  stage: test
-  rules:
-    - if: '$ROLLBACK_DIGEST'
-      when: never
-    - if: '$CI_COMMIT_REF_PROTECTED == "true"'
-      exists: [release/pin.json]
-  script:
-    - !reference [.venv-setup, script]
-    - cp -a /opt/promiseops/tracking-wheelhouse ./tracking-wheelhouse
-    - uv pip install --python .venv/bin/python --no-index --find-links tracking-wheelhouse --require-hashes -r requirements-tracking.lock
-    - uv pip install --python .venv/bin/python --no-index --no-deps --no-build-isolation .
-    - |
-      MLFLOW_TRACKING_URI="$(kubectl -n "$TEAM-staging" get secret "$RUNTIME_SECRET_NAME" -o jsonpath='{.data.MLFLOW_TRACKING_URI}' | base64 -d)"
-      test -n "$MLFLOW_TRACKING_URI"
-      export MLFLOW_TRACKING_URI
-    - MLFLOW_DISABLE_TELEMETRY=true .venv/bin/python -m promiseops.pin fetch --pin release/pin.json --bundle release/bundle
-  artifacts:
-    paths: [release/bundle/]
-    expire_in: 1 week
-
 # ---------- build ----------
 build-own-image:
   stage: build
@@ -150,6 +127,8 @@ build-worker:
     - python ci/registry_login.py
     - buildctl --addr "$BUILDKIT_ADDR" --tlsservername "$BUILDKIT_SERVER_NAME" --tlscacert "$BUILDKIT_CA" --tlscert "$BUILDKIT_CERT" --tlskey "$BUILDKIT_KEY" build --frontend dockerfile.v0 --local context=. --local dockerfile=. --opt filename=Dockerfile.worker --opt build-arg:APP_IMAGE="$CI_REGISTRY_IMAGE/app@$APP_DIGEST" --opt build-arg:UV_IMAGE="$UV_IMAGE" --output type=image,name="$CI_REGISTRY_IMAGE/worker:$CI_COMMIT_SHA",push=true --metadata-file worker-build.json
     - python -c 'import json; assert json.load(open("worker-build.json"))["containerimage.digest"].startswith("sha256:")'
+    # The two values the promiseops_training DAG asks for (worker_image, source_commit).
+    - python -c 'import json, os; print("worker_image:", os.environ["CI_REGISTRY_IMAGE"] + "/worker@" + json.load(open("worker-build.json"))["containerimage.digest"]); print("source_commit:", os.environ["CI_COMMIT_SHA"])'
   artifacts:
     paths: [worker-build.json]
 
@@ -371,3 +350,129 @@ airflow-sync:
   script:
     - python -m py_compile dags/*.py
     - python ci/airflow_sync.py --namespace "$TEAM-platform" --commit "$CI_COMMIT_SHA"
+
+# ---------- drills (manual, main only): evidence K4, K6, K7, K8 ----------
+# Read-only toward the code: they exercise what is already deployed and keep their raw output
+# as artifacts for reports/evidence.md. Never run two drills on one namespace at the same time.
+.drill:
+  needs: []
+  stage: rollback
+  rules:
+    - if: '$ROLLBACK_DIGEST'
+      when: never
+    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH && $CI_COMMIT_REF_PROTECTED == "true"'
+      when: manual
+  allow_failure: true
+  artifacts:
+    when: always
+    paths: [drill/]
+    expire_in: never
+
+# K6 + K7: open-loop load on production (acceptance/load.py) while the HPA is watched; then keep
+# watching until it is back to its minimum. LOAD_RPS / LOAD_SECONDS can be set when running.
+load-test-prod:
+  extends: .drill
+  resource_group: production
+  timeout: 30m
+  variables:
+    NAMESPACE: "$TEAM-prod"
+    LOAD_RPS: "40"
+    LOAD_SECONDS: "240"
+    WATCH_AFTER_SECONDS: "420"
+  script:
+    - !reference [.venv-setup, script]
+    - mkdir -p drill
+    - |
+      PROMISEOPS_API_KEY="$(kubectl -n "$NAMESPACE" get secret "$RUNTIME_SECRET_NAME" -o jsonpath='{.data.PROMISEOPS_API_KEY}' | base64 -d)"
+      PROMISEOPS_DATABASE_URL="$(kubectl -n "$NAMESPACE" get secret "$RUNTIME_SECRET_NAME" -o jsonpath='{.data.PROMISEOPS_DATABASE_URL}' | base64 -d)"
+      test -n "$PROMISEOPS_API_KEY" && test -n "$PROMISEOPS_DATABASE_URL"
+      export PROMISEOPS_API_KEY PROMISEOPS_DATABASE_URL
+    - |
+      .venv/bin/python - <<'PY'
+      import json, os
+      import psycopg
+      url = os.environ["PROMISEOPS_DATABASE_URL"]
+      for prefix in ("postgresql+psycopg://", "postgresql+psycopg2://", "postgres://"):
+          if url.startswith(prefix):
+              url = "postgresql://" + url[len(prefix):]
+      with psycopg.connect(url, connect_timeout=15) as conn:
+          ids = [r[0] for r in conn.execute("SELECT order_id FROM orders ORDER BY random() LIMIT 300")]
+      json.dump(ids, open("drill/order-ids.json", "w"))
+      print("order ids for the load:", len(ids))
+      PY
+    - |
+      watch_hpa() {
+        end=$(( $(date +%s) + $1 ))
+        while [ "$(date +%s)" -lt "$end" ]; do
+          echo "$(date -u +%H:%M:%S) $(kubectl -n "$NAMESPACE" get hpa "$HELM_RELEASE" --no-headers 2>&1 | tr -s ' ') | ready pods: $(kubectl -n "$NAMESPACE" get pods -l app.kubernetes.io/component=api,app.kubernetes.io/instance=$HELM_RELEASE --no-headers 2>/dev/null | grep -c ' Running ')"
+          sleep 15
+        done
+      }
+      watch_hpa $(( LOAD_SECONDS + 90 )) > drill/hpa-during-load.txt &
+      WATCHER=$!
+      status=0
+      .venv/bin/python acceptance/load.py --url "http://$HELM_RELEASE.$NAMESPACE.svc.cluster.local" --order-ids drill/order-ids.json --rps "$LOAD_RPS" --seconds "$LOAD_SECONDS" --output drill/load-report.json || status=$?
+      wait "$WATCHER" || true
+      cat drill/hpa-during-load.txt
+      echo "--- after the load (scale-down)"
+      watch_hpa "$WATCH_AFTER_SECONDS" | tee drill/hpa-after-load.txt
+      kubectl -n "$NAMESPACE" describe hpa "$HELM_RELEASE" | sed -n '/Events:/,$p' | tee drill/hpa-events.txt
+      exit "$status"
+
+# K8: delete one production API pod while /readyz is polled through the Service every 0.5 s.
+kill-pod-prod:
+  extends: .drill
+  resource_group: production
+  variables:
+    NAMESPACE: "$TEAM-prod"
+  script:
+    - !reference [.approver-check, script]
+    - mkdir -p drill
+    - |
+      SELECTOR="app.kubernetes.io/component=api,app.kubernetes.io/instance=$HELM_RELEASE"
+      kubectl -n "$NAMESPACE" get pods -l "$SELECTOR" -o wide | tee drill/pods-before.txt
+      python ci/poll_service.py --url "http://$HELM_RELEASE.$NAMESPACE.svc.cluster.local/readyz" --seconds 180 --stop-file drill/done --output drill/kill-pod-poll.json > drill/kill-pod-poll.txt &
+      POLLER=$!
+      sleep 10
+      VICTIM="$(kubectl -n "$NAMESPACE" get pods -l "$SELECTOR" -o jsonpath='{.items[0].metadata.name}')"
+      echo "$(date -u +%H:%M:%S) deleting pod $VICTIM" | tee drill/kill-pod.txt
+      kubectl -n "$NAMESPACE" delete pod "$VICTIM" --wait=false
+      for i in $(seq 1 60); do
+        want="$(kubectl -n "$NAMESPACE" get deploy "$HELM_RELEASE" -o jsonpath='{.spec.replicas}')"
+        ready="$(kubectl -n "$NAMESPACE" get pods -l "$SELECTOR" --no-headers | grep -v "$VICTIM" | grep -c ' 1/1 ' || true)"
+        [ "$ready" -ge "$want" ] && break
+        sleep 3
+      done
+      sleep 20
+      touch drill/done
+      status=0; wait "$POLLER" || status=$?
+      echo "$(date -u +%H:%M:%S) all pods ready again" | tee -a drill/kill-pod.txt
+      kubectl -n "$NAMESPACE" get pods -l "$SELECTOR" -o wide | tee drill/pods-after.txt
+      cat drill/kill-pod-poll.txt
+      exit "$status"
+
+# K4: upgrade staging with a release whose readiness can never pass (model directory missing).
+# helm --atomic must revert it; the old pod keeps serving because maxUnavailable is 0.
+broken-readiness-staging:
+  extends: .drill
+  resource_group: staging
+  variables:
+    NAMESPACE: "$TEAM-staging"
+  script:
+    - mkdir -p drill
+    - |
+      helm -n "$NAMESPACE" history "$HELM_RELEASE" --max 3 | tee drill/history-before.txt
+      python ci/poll_service.py --url "http://$HELM_RELEASE.$NAMESPACE.svc.cluster.local/readyz" --seconds 360 --stop-file drill/done --output drill/broken-readiness-poll.json > drill/broken-readiness-poll.txt &
+      POLLER=$!
+      sleep 5
+      if helm upgrade "$HELM_RELEASE" "$CHART_DIR" --namespace "$NAMESPACE" --reuse-values --set env.PROMISEOPS_RELEASE_DIR=/nonexistent --atomic --wait --timeout 150s 2>&1 | tee drill/broken-upgrade.txt; then
+        echo "UNEXPECTED: the broken release was accepted"; touch drill/done; wait "$POLLER" || true; exit 1
+      fi
+      kubectl -n "$NAMESPACE" rollout status "deployment/$HELM_RELEASE" --timeout=180s
+      sleep 10
+      touch drill/done
+      status=0; wait "$POLLER" || status=$?
+      helm -n "$NAMESPACE" history "$HELM_RELEASE" --max 3 | tee drill/history-after.txt
+      kubectl -n "$NAMESPACE" get deploy "$HELM_RELEASE" -o jsonpath='{.spec.template.spec.containers[0].env}' | grep -q nonexistent && { echo "broken setting still deployed"; exit 1; }
+      cat drill/broken-readiness-poll.txt
+      exit "$status"
