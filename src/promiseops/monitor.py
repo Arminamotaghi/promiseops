@@ -82,8 +82,8 @@ def _psi(reference: pd.Series, current: pd.Series) -> float:
 def _tvd(reference: pd.Series, current: pd.Series) -> float:
     if reference.empty or current.empty:
         return 0.0
-    reference = reference.astype(str).fillna("unknown")
-    current = current.astype(str).fillna("unknown")
+    reference = reference.fillna("unknown").astype(str)
+    current = current.fillna("unknown").astype(str)
     categories = sorted(set(reference.unique()) | set(current.unique()))
     if not categories:
         return 0.0

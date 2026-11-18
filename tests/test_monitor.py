@@ -6,7 +6,7 @@ import pytest
 
 from promiseops import worker
 from promiseops.features import CATEGORICAL_FEATURES, NUMERIC_FEATURES
-from promiseops.monitor import build_report
+from promiseops.monitor import _tvd, build_report
 
 AS_OF = datetime(2018, 5, 1, 0, 0, tzinfo=UTC)
 
@@ -196,3 +196,10 @@ def test_monitor_train_runs_train_when_report_requires_it(tmp_path, monkeypatch)
 
     assert len(calls) == 1
     assert calls[0]["out_dir"] == tmp_path
+
+
+def test_tvd_maps_missing_values_to_unknown():
+    reference = pd.Series([np.nan, "SP", "SP"])
+    current = pd.Series(["unknown", "SP", "SP"])
+
+    assert _tvd(reference, current) == 0.0
