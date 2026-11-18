@@ -1,4 +1,5 @@
 import httpx
+import re
 from typing import Dict, Any, Optional, Tuple
 
 def get_feed_index(
@@ -30,23 +31,26 @@ def download_feed_file(
     base_url: str,
     feed_key: str,
     file_name: str,
-    expected_file_sha256: str,
-    expected_payload_sha256: str,
     timeout: float = 30.0,
     transport=None,
-) -> Tuple[bytes, str, str]:
+) -> bytes:
     """
-    Download a feed file. 
-    
-    Returns raw bytes and expected checksums to be processed by ingest_batch 
-    (which calls ingest_checks.read_envelope for strict validation).
+    Download a feed file from the internal gateway via GET /feed/{file_name}.
     """
+    # Security check for file_name to prevent path injection
+    if not re.match(r"^[A-Za-z0-9][A-Za-z0-9_.-]*$", file_name):
+        raise ValueError(f"Invalid file name: {file_name}")
+
     url = f"{base_url.rstrip('/')}/feed/{file_name}"
     headers = {
         "Authorization": f"Bearer {feed_key}"
     }
+    
+    client_kwargs = {"timeout": timeout}
+    if transport is not None:
+        client_kwargs["transport"] = transport
 
-    with httpx.Client(headers=headers, timeout=timeout, transport=transport) as client:
-        response = client.get(url)
+    with httpx.Client(**client_kwargs) as client:
+        response = client.get(url, headers=headers)
         response.raise_for_status()
-        return response.content, expected_file_sha256, expected_payload_sha256
+        return response.content
