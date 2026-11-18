@@ -5,13 +5,13 @@ log goes into ``reports/evidence.md``. Read-only: nothing is written anywhere.
 
 * ``check_env``: which settings the worker has. Prints PRESENT or MISSING, never a value.
 * ``check_gateway``: ``GET /feed`` on the company gateway with the group key; HTTP status,
-  number of batches, the manifest ``as_of``, the field names of an entry and the first and
-  last ``available_at``.
+  number of releases, the manifest ``as_of``, the field names of a release and the first and
+  last ``available_at``. A manifest without a release list fails the check.
 * ``check_database``: connects to the team database; number of tables in ``public``.
 * ``check_mlflow``: ``GET /health`` on the MLflow tracking server.
-* ``check_team_code``: what ConfigMap ``team-code`` put in ``/opt/airflow/team-code`` and
-  whether the ``promiseops`` modules the DAGs use import here (a missing dependency is
-  reported by name).
+* ``check_team_code``: what ConfigMap ``team-code`` put in ``/opt/airflow/team-code/promiseops``
+  (one file per module) and whether the modules the DAGs use import here (a missing
+  dependency is reported by name).
 
 Each check is its own task, so the grid shows exactly which one fails. Errors are reported by
 type only, so no address or key reaches the log.
@@ -28,7 +28,8 @@ from airflow.sdk import dag, task
 
 REQUIRED_ENV = ("COMPANY_GATEWAY_URL", "COMPANY_FEED_KEY", "PROMISEOPS_DATABASE_URL", "MLFLOW_TRACKING_URI")
 TEAM_CODE_DIR = "/opt/airflow/team-code"
-TEAM_CODE_ZIP = os.path.join(TEAM_CODE_DIR, "promiseops.zip")
+# ConfigMap team-code is mounted as this directory (one file per module).
+PACKAGE_DIR = os.path.join(TEAM_CODE_DIR, "promiseops")
 # Modules the ingest and training DAGs import inside their tasks.
 DAG_MODULES = ("promiseops.contracts", "promiseops.gateway", "promiseops.feed_sync", "promiseops.data", "promiseops.training_client")
 TIMEOUT = 15
@@ -88,16 +89,15 @@ def promiseops_env_check():
             raise RuntimeError("gateway answered 200 but the manifest is not JSON") from None
         entries = None
         if isinstance(payload, dict):
-            entries = next((payload[k] for k in ("entries", "batches", "files") if isinstance(payload.get(k), list)), None)
+            entries = next((payload[k] for k in ("releases", "entries") if isinstance(payload.get(k), list)), None)
             print("manifest keys:", sorted(payload))
         if entries is None:
-            print("batch list not found in the manifest")
-            return
+            raise RuntimeError("no release list in the manifest; promiseops_ingest would ingest nothing")
         times = sorted(str(entry.get("available_at")) for entry in entries if isinstance(entry, dict))
-        print("batches:", len(entries), "| as_of:", payload.get("as_of"))
+        print("releases:", len(entries), "| as_of:", payload.get("as_of"))
         if entries and isinstance(entries[0], dict):
             # Field names only: the ingest code must use the gateway's real names.
-            print("entry fields:", sorted(entries[0]))
+            print("release fields:", sorted(entries[0]))
         if times:
             print("available_at first:", times[0], "| last:", times[-1])
 
@@ -136,10 +136,13 @@ def promiseops_env_check():
         except OSError as exc:
             raise RuntimeError(f"{TEAM_CODE_DIR} not readable: {type(exc).__name__}") from None
         print(f"{TEAM_CODE_DIR}:", ", ".join(names) or "empty")
-        if not os.path.isfile(TEAM_CODE_ZIP):
-            raise RuntimeError(f"{TEAM_CODE_ZIP} not found; run the airflow-sync job")
-        if TEAM_CODE_ZIP not in sys.path:
-            sys.path.insert(0, TEAM_CODE_ZIP)
+        try:
+            modules = sorted(name for name in os.listdir(PACKAGE_DIR) if not name.startswith(".."))
+        except OSError as exc:
+            raise RuntimeError(f"{PACKAGE_DIR} not readable: {type(exc).__name__}; run the airflow-sync job") from None
+        print(f"{PACKAGE_DIR}:", ", ".join(modules) or "empty")
+        if "__init__.py" not in modules:
+            raise RuntimeError(f"{PACKAGE_DIR}/__init__.py missing; run the airflow-sync job")
         failed = []
         for module in ("promiseops", *DAG_MODULES):
             try:

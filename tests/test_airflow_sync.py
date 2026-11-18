@@ -2,12 +2,9 @@
 
 from __future__ import annotations
 
-import base64
 import importlib.util
-import io
 import subprocess
 import sys
-import zipfile
 from pathlib import Path
 
 import pytest
@@ -50,23 +47,35 @@ def test_nothing_is_removed_when_current_keys_cannot_be_read(tree):
     assert None not in patch["data"].values()
 
 
-def test_package_zip_imports_and_is_reproducible(tree, tmp_path):
-    archive = sync.package_zip(tree / "src")
-    assert archive == sync.package_zip(tree / "src")
-    names = zipfile.ZipFile(io.BytesIO(archive)).namelist()
-    assert names == ["promiseops/__init__.py", "promiseops/mod.py"]
-    target = tmp_path / "promiseops.zip"
-    target.write_bytes(archive)
+def test_package_is_shipped_as_flat_files_and_imports_from_a_directory(tree, tmp_path):
+    files = sync.package_files(tree / "src")
+    assert sorted(files) == ["__init__.py", "mod.py"]
+    # The platform mounts team-code as <dir>/promiseops with <dir> on sys.path.
+    mount = tmp_path / "team-code" / "promiseops"
+    mount.mkdir(parents=True)
+    for name, text in files.items():
+        (mount / name).write_text(text)
     code = "import sys; sys.path.insert(0, sys.argv[1]); import promiseops.mod as m; print(m.VALUE)"
-    out = subprocess.run([sys.executable, "-I", "-c", code, str(target)], capture_output=True, text=True, check=True)
+    out = subprocess.run([sys.executable, "-I", "-c", code, str(mount.parent)], capture_output=True, text=True, check=True)
     assert out.stdout.strip() == "42"
 
 
-def test_code_patch_is_binary_and_keeps_other_keys(tree):
-    archive = sync.package_zip(tree / "src")
-    patch = sync.code_patch(archive, {"data": {"README": "staff"}}, "abc")
-    assert base64.b64decode(patch["binaryData"][sync.PACKAGE_KEY]) == archive
-    assert "data" not in patch
+def test_subpackage_stops_the_sync(tree):
+    (tree / "src" / "promiseops" / "sub").mkdir()
+    (tree / "src" / "promiseops" / "sub" / "x.py").write_text("")
+    with pytest.raises(sync.SyncError):
+        sync.package_files(tree / "src")
+
+
+def test_code_patch_keeps_readme_removes_old_zip_and_deleted_modules(tree):
+    files = sync.package_files(tree / "src")
+    existing = {"data": {"README": "staff", "gone.py": "x"}, "binaryData": {sync.PACKAGE_KEY: "eA=="}}
+    patch = sync.code_patch(files, existing, "abc")
+    assert "README" not in patch["data"]
+    assert patch["data"]["gone.py"] is None
+    assert patch["data"]["mod.py"] == "VALUE = 42\n"
+    assert patch["binaryData"] == {sync.PACKAGE_KEY: None}
+    assert "binaryData" not in sync.code_patch(files, None, "abc")
 
 
 def test_size_limit_stops_before_patching(tree, monkeypatch):
@@ -74,7 +83,7 @@ def test_size_limit_stops_before_patching(tree, monkeypatch):
     with pytest.raises(sync.SyncError):
         sync.dags_patch(sync.dag_files(tree / "dags"), {}, "abc")
     with pytest.raises(sync.SyncError):
-        sync.code_patch(sync.package_zip(tree / "src"), None, "abc")
+        sync.code_patch(sync.package_files(tree / "src"), None, "abc")
 
 
 def test_invalid_key_is_rejected(tree):

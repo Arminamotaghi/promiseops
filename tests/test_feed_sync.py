@@ -33,9 +33,9 @@ def test_sync_feed_success(monkeypatch):
                 200,
                 json={
                     "as_of": "2026-01-03T00:00:00Z",
-                    "entries": [
+                    "releases": [
                         {
-                            "file_name": "batch1.json",
+                            "file": "batch1.json",
                             "file_sha256": "dummy_sha",
                             "payload_sha256": "dummy_payload_sha",
                             "available_at": "2026-01-01T00:00:00Z",
@@ -72,16 +72,16 @@ def test_sync_feed_stops_on_rejection(monkeypatch, capsys):
                 200,
                 json={
                     "as_of": "2026-01-03T00:00:00Z",
-                    "entries": [
+                    "releases": [
                         {
-                            "file_name": "batch_fail.json",
+                            "file": "batch_fail.json",
                             "file_sha256": "sha_fail",
                             "payload_sha256": "payload_sha_fail",
                             "available_at": "2026-01-01T00:00:00Z",
                             "kind": "orders",
                         },
                         {
-                            "file_name": "batch_success.json",
+                            "file": "batch_success.json",
                             "file_sha256": "sha_ok",
                             "payload_sha256": "payload_sha_ok",
                             "available_at": "2026-01-02T00:00:00Z",
@@ -114,7 +114,7 @@ def test_sync_feed_stops_on_rejection(monkeypatch, capsys):
     assert "batch_success.json" not in downloaded_files
 
     captured = capsys.readouterr()
-    output_data = json.loads(captured.out.strip())
+    output_data = json.loads(captured.out.strip().splitlines()[-1])
     assert output_data["file_name"] == "batch_fail.json"
     assert output_data["status"] == "rejected"
     assert "checksum_mismatch" in output_data["reason"]
@@ -200,4 +200,58 @@ def test_sync_feed_missing_required_fields_returns_one(capsys):
     )
 
     assert ret == 1
-    assert "Invalid or incomplete feed entry" in capsys.readouterr().err
+    assert "incomplete feed release" in capsys.readouterr().err
+
+
+# --- the real gateway manifest: {"schema_version", "as_of", "releases": [...]} ------------------
+
+def _manifest(releases, as_of="2018-02-01T00:00:00+00:00"):
+    return {"schema_version": "1.0", "as_of": as_of, "releases": releases}
+
+
+def _release(name, available_at, kind="orders"):
+    return {"file": name, "available_at": available_at, "kind": kind, "file_sha256": "f" * 64, "payload_sha256": "p" * 64}
+
+
+def _gateway(manifest, downloaded):
+    def handler(request: httpx.Request):
+        if request.url.path.endswith("/feed"):
+            return httpx.Response(200, json=manifest)
+        downloaded.append(request.url.path.rsplit("/", 1)[-1])
+        return httpx.Response(200, content=b"{}")
+
+    return httpx.MockTransport(handler)
+
+
+def test_releases_up_to_the_requested_cutoff_only_in_order(monkeypatch):
+    downloaded, calls = [], []
+    manifest = _manifest([
+        _release("outcomes-20180115.json", "2018-01-15T00:00:00+00:00", "outcomes"),
+        _release("orders-20180129.json", "2018-01-29T00:00:00+00:00"),
+        _release("orders-20180115.json", "2018-01-15T00:00:00+00:00"),
+        _release("orders-20180101.json", "2018-01-01T00:00:00+00:00"),
+    ])
+    monkeypatch.setattr("promiseops.feed_sync.ingest_batch", lambda c, content, **kw: calls.append(kw) or {"status": "accepted"})
+    assert sync_feed("http://gw", "k", as_of="2018-01-15T00:00:00Z", connection=FakeConnection(), transport=_gateway(manifest, downloaded)) == 0
+    assert downloaded == ["orders-20180101.json", "orders-20180115.json", "outcomes-20180115.json"]
+    assert {kw["as_of"].isoformat() for kw in calls} == {"2018-01-15T00:00:00+00:00"}
+
+
+def test_without_as_of_the_manifest_as_of_is_the_cutoff(monkeypatch):
+    downloaded = []
+    manifest = _manifest([_release("orders-20180101.json", "2018-01-01T00:00:00+00:00"), _release("orders-20180212.json", "2018-02-12T00:00:00+00:00")])
+    monkeypatch.setattr("promiseops.feed_sync.ingest_batch", lambda c, content, **kw: {"status": "accepted"})
+    assert sync_feed("http://gw", "k", connection=FakeConnection(), transport=_gateway(manifest, downloaded)) == 0
+    assert downloaded == ["orders-20180101.json"]
+
+
+@pytest.mark.parametrize("manifest", [
+    {"schema_version": "1.0", "as_of": "2018-02-01T00:00:00+00:00", "batches": []},
+    _manifest([]),
+    _manifest([_release("orders-20180301.json", "2018-03-01T00:00:00+00:00")]),
+])
+def test_nothing_to_ingest_is_an_error_not_a_silent_success(manifest, capsys):
+    downloaded = []
+    assert sync_feed("http://gw", "k", connection=FakeConnection(), transport=_gateway(manifest, downloaded)) == 1
+    assert downloaded == [] and "Error" in capsys.readouterr().err
+
