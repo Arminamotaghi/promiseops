@@ -412,7 +412,26 @@ def test_database_url_requires_the_environment_variable(monkeypatch):
         worker._database_url()
 
 
-def test_monitor_train_is_deferred_with_a_clean_failure(capsys):
+def test_main_monitor_train_dispatches_to_monitor_train(tmp_path, monkeypatch, capsys):
+    captured = {}
+
+    class FakeEngine:
+        @contextmanager
+        def connect(self):
+            yield "connection"
+
+        def dispose(self):
+            pass
+
+    monkeypatch.setattr(worker, "create_engine", lambda url: FakeEngine())
+    monkeypatch.setattr(
+        worker,
+        "monitor_train",
+        lambda connection, **kwargs: captured.update(kwargs) or {"retraining_required": False},
+    )
+    monkeypatch.setenv("PROMISEOPS_DATABASE_URL", "postgresql://promiseops@db/promiseops")
+    monkeypatch.setenv("PROMISEOPS_RELEASE", str(tmp_path / "release.json"))
+
     exit_code = worker.main(
         [
             "--mode",
@@ -426,5 +445,9 @@ def test_monitor_train_is_deferred_with_a_clean_failure(capsys):
         ]
     )
 
-    assert exit_code == 2
-    assert "monitor-train is not implemented yet" in capsys.readouterr().err
+    assert exit_code == 0
+    assert captured["train_end"] == TRAIN_END
+    assert captured["validation_end"] == VALIDATION_END
+    assert captured["as_of"] == AS_OF
+    assert captured["out_dir"] == tmp_path
+    assert json.loads(capsys.readouterr().out) == {"retraining_required": False}
