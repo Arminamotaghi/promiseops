@@ -82,7 +82,10 @@ def promiseops_env_check():
         print("gateway GET /feed -> HTTP", response.status_code)
         if response.status_code != 200:
             raise RuntimeError(f"gateway answered HTTP {response.status_code}")
-        payload = response.json()
+        try:
+            payload = response.json()
+        except ValueError:  # requests' JSONDecodeError is a ValueError
+            raise RuntimeError("gateway answered 200 but the manifest is not JSON") from None
         entries = None
         if isinstance(payload, dict):
             entries = next((payload[k] for k in ("entries", "batches", "files") if isinstance(payload.get(k), list)), None)
