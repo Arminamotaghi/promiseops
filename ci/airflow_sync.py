@@ -7,14 +7,13 @@ the ``<team>-platform`` namespace. CI may update/patch these two ConfigMaps, not
 * ``team-dags``: one key per ``dags/*.py``. A ``.py`` key whose file is no longer in ``dags/``
   is removed (only when the current keys can be read). Every other key, such as the staff
   ``README``, is never touched.
-* ``team-code``: one ``binaryData`` key, ``promiseops.zip``, holding ``src/promiseops``
-  without ``__pycache__``. ConfigMap keys cannot contain ``/``, so the package directory
-  cannot be stored file by file; a DAG puts the zip on ``sys.path`` before importing
-  ``promiseops``::
-
-      TEAM_CODE_ZIP = "/opt/airflow/team-code/promiseops.zip"
-      if os.path.exists(TEAM_CODE_ZIP) and TEAM_CODE_ZIP not in sys.path:
-          sys.path.insert(0, TEAM_CODE_ZIP)
+* ``team-code``: one key per file of ``src/promiseops`` (``__init__.py``, ``data.py``, ...).
+  The platform mounts this ConfigMap as the directory ``/opt/airflow/team-code/promiseops``
+  and ``/opt/airflow/team-code`` is on ``sys.path``, so ``import promiseops`` works in every
+  task with no path changes (seen in the promiseops_env_check log of 27 Aban). ConfigMap keys
+  cannot contain ``/``, so the package must stay flat; a subpackage stops the sync. A ``.py``
+  key whose file left the package, and the ``promiseops.zip`` key of the first version, are
+  removed. Every other key (the staff ``README``) is left alone.
 
 Both are JSON merge patches: keys that are not named are left as they are. Each ConfigMap
 must stay under the platform limit (about 900 KB); the script stops before patching if not.
@@ -29,27 +28,22 @@ Usage (CI job ``airflow-sync``, manual, main only)::
 from __future__ import annotations
 
 import argparse
-import base64
 import hashlib
-import io
 import json
 import re
 import subprocess
 import sys
 import tempfile
-import zipfile
 from pathlib import Path
 
 DAGS_CONFIGMAP = "team-dags"
 CODE_CONFIGMAP = "team-code"
-PACKAGE_KEY = "promiseops.zip"
+PACKAGE_KEY = "promiseops.zip"  # first version only; removed on the next sync
 SIZE_LIMIT = 900_000  # bytes per ConfigMap, as given by the course staff
 COMMIT_ANNOTATION = "promiseops/source-commit"
 DIGEST_ANNOTATION = "promiseops/content-sha256"
 
 _KEY = re.compile(r"^[-._a-zA-Z0-9]{1,253}$")
-# Fixed timestamp so the same source gives a byte-identical zip (and the same digest).
-_ZIP_TIME = (2026, 1, 1, 0, 0, 0)
 
 
 class SyncError(RuntimeError):
@@ -67,20 +61,20 @@ def dag_files(dags_dir: Path) -> dict[str, str]:
     return files
 
 
-def package_zip(src_dir: Path, package: str = "promiseops") -> bytes:
+def package_files(src_dir: Path, package: str = "promiseops") -> dict[str, str]:
     root = src_dir / package
     if not (root / "__init__.py").is_file():
         raise SyncError(f"{root} is not a Python package")
-    buffer = io.BytesIO()
-    with zipfile.ZipFile(buffer, "w", compression=zipfile.ZIP_DEFLATED) as archive:
-        for path in sorted(root.rglob("*")):
-            if not path.is_file() or "__pycache__" in path.parts or path.suffix in (".pyc", ".pyo"):
-                continue
-            info = zipfile.ZipInfo(path.relative_to(src_dir).as_posix(), date_time=_ZIP_TIME)
-            info.compress_type = zipfile.ZIP_DEFLATED
-            info.external_attr = 0o644 << 16
-            archive.writestr(info, path.read_bytes())
-    return buffer.getvalue()
+    files = {}
+    for path in sorted(root.rglob("*")):
+        if "__pycache__" in path.parts or path.suffix in (".pyc", ".pyo") or path.is_dir():
+            continue
+        if path.parent != root:
+            raise SyncError(f"{path.relative_to(src_dir)}: subpackages cannot be shipped through a ConfigMap")
+        if not _KEY.fullmatch(path.name):
+            raise SyncError(f"{path.name}: not a valid ConfigMap key")
+        files[path.name] = path.read_text(encoding="utf-8")
+    return files
 
 
 def digest(data: dict[str, str], binary: dict[str, str]) -> str:
@@ -108,15 +102,23 @@ def dags_patch(files: dict[str, str], existing: dict[str, str] | None, commit: s
     return {"metadata": {"annotations": annotations}, "data": data}
 
 
-def code_patch(archive: bytes, existing: dict | None, commit: str) -> dict:
-    encoded = base64.b64encode(archive).decode()
-    binary = {PACKAGE_KEY: encoded}
-    kept_data = (existing or {}).get("data") or {}
-    kept_binary = {k: v for k, v in ((existing or {}).get("binaryData") or {}).items() if k != PACKAGE_KEY}
-    if configmap_size(kept_data, {**kept_binary, **binary}) > SIZE_LIMIT:
-        raise SyncError(f"{CODE_CONFIGMAP} would exceed {SIZE_LIMIT} bytes ({len(encoded)} for the zip)")
-    annotations = {COMMIT_ANNOTATION: commit, DIGEST_ANNOTATION: digest({}, binary)}
-    return {"metadata": {"annotations": annotations}, "binaryData": binary}
+def code_patch(files: dict[str, str], existing: dict | None, commit: str) -> dict:
+    """Merge patch for team-code. ``existing`` is the current ConfigMap (None if unreadable)."""
+    data: dict[str, str | None] = dict(files)
+    binary: dict[str, None] = {}
+    if existing is not None:
+        for key in existing.get("data") or {}:
+            if key.endswith(".py") and key not in files:
+                data[key] = None  # a module removed from the package
+        if PACKAGE_KEY in (existing.get("binaryData") or {}):
+            binary[PACKAGE_KEY] = None  # the zip shipped by the first version of this job
+    kept = {k: v for k, v in ((existing or {}).get("data") or {}).items() if k not in data}
+    if configmap_size({**kept, **data}, {}) > SIZE_LIMIT:
+        raise SyncError(f"{CODE_CONFIGMAP} would exceed {SIZE_LIMIT} bytes")
+    patch = {"metadata": {"annotations": {COMMIT_ANNOTATION: commit, DIGEST_ANNOTATION: digest(files, {})}}, "data": data}
+    if binary:
+        patch["binaryData"] = binary
+    return patch
 
 
 def kubectl(*args: str) -> subprocess.CompletedProcess:
@@ -158,14 +160,14 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--dry-run", action="store_true", help="build and check the patches without kubectl")
     args = parser.parse_args(argv)
     try:
-        files, archive = dag_files(args.dags), package_zip(args.src)
+        files, package = dag_files(args.dags), package_files(args.src)
         current_dags = None if args.dry_run else read_configmap(args.namespace, DAGS_CONFIGMAP)
         current_code = None if args.dry_run else read_configmap(args.namespace, CODE_CONFIGMAP)
         patches = {
             DAGS_CONFIGMAP: dags_patch(
                 files, (current_dags.get("data") or {}) if current_dags is not None else None, args.commit
             ),
-            CODE_CONFIGMAP: code_patch(archive, current_code, args.commit),
+            CODE_CONFIGMAP: code_patch(package, current_code, args.commit),
         }
         for name, patch in patches.items():
             report(name, patch)

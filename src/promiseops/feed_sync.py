@@ -1,7 +1,7 @@
 """Feed synchronization client for PromiseOps.
 
-Fetches feed index from gateway, sorts entries chronologically (with orders
-before outcomes at equal timestamps), downloads files, and ingests them.
+Fetches the feed manifest from the gateway, keeps the releases up to the cutoff, sorts them
+chronologically (orders before outcomes at equal timestamps), downloads and ingests them.
 """
 
 from __future__ import annotations
@@ -38,6 +38,22 @@ def sort_feed_entries(entries: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return sorted(entries, key=sort_key)
 
 
+def _releases(index_data: dict[str, Any]) -> list[dict[str, Any]] | None:
+    """The batch list of a manifest: the gateway calls it ``releases``; ``entries`` is accepted too."""
+    for key in ("releases", "entries"):
+        value = index_data.get(key)
+        if isinstance(value, list):
+            return value
+    return None
+
+
+def _instant(value: str) -> datetime:
+    parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    if parsed.tzinfo is None:
+        raise ValueError("timestamp without timezone")
+    return parsed
+
+
 def sync_feed(
     base_url: str,
     feed_key: str,
@@ -45,91 +61,77 @@ def sync_feed(
     connection: Any = None,
     transport: httpx.BaseTransport | None = None,
 ) -> int:
-    """Synchronize feed entries from gateway and ingest them."""
+    """Synchronize feed releases from the gateway and ingest them in order.
+
+    The gateway answers ``GET /feed`` with ``{"schema_version", "as_of", "releases": [...]}``;
+    each release has ``file``, ``available_at``, ``kind``, ``file_sha256`` and
+    ``payload_sha256``. Only releases with ``available_at <= cutoff`` are ingested, where the
+    cutoff is the requested ``as_of`` (replay) or, without one, the manifest ``as_of``. The
+    cutoff is also the ``as_of`` stored with every receipt. A manifest without a release list,
+    or with nothing up to the cutoff, is an error: a silent "success" that ingested nothing
+    would hide a broken feed.
+    """
     try:
         index_data = get_feed_index(base_url, feed_key, as_of=as_of, transport=transport)
     except Exception as e:
-        print(f"Error fetching feed index: {e}", file=sys.stderr)
+        print(f"Error fetching feed index: {type(e).__name__}: {e}", file=sys.stderr)
         return 1
 
-    # Extract and parse the feed-level as_of timestamp from the index response
-    feed_as_of_str = index_data.get("as_of")
-    if not feed_as_of_str:
-        print("Error: Feed index is missing 'as_of'.", file=sys.stderr)
+    releases = _releases(index_data)
+    if releases is None:
+        print(f"Error: feed manifest has no release list (keys: {sorted(index_data)}).", file=sys.stderr)
         return 1
 
+    cutoff_str = as_of or index_data.get("as_of")
+    if not cutoff_str:
+        print("Error: no as_of given and the feed manifest has none.", file=sys.stderr)
+        return 1
     try:
-        feed_as_of_dt = datetime.fromisoformat(feed_as_of_str.replace("Z", "+00:00"))
+        cutoff = _instant(cutoff_str)
     except ValueError as exc:
-        print(f"Error: Invalid feed as_of timestamp '{feed_as_of_str}': {exc}", file=sys.stderr)
+        print(f"Error: invalid as_of '{cutoff_str}': {exc}", file=sys.stderr)
         return 1
 
-    entries = index_data.get("entries", [])
-    sorted_entries = sort_feed_entries(entries)
-
-    for entry in sorted_entries:
-        file_name = entry.get("file_name") or entry.get("file")
-        file_sha256 = entry.get("file_sha256")
-        payload_sha256 = entry.get("payload_sha256")
-        available_at_str = entry.get("available_at")
-
-        if not file_name or not file_sha256 or not available_at_str:
-            print(f"Error: Invalid or incomplete feed entry (missing file/file_name, checksum, or available_at): {entry}", file=sys.stderr)
+    selected = []
+    for entry in releases:
+        file_name = entry.get("file") or entry.get("file_name")
+        if not file_name or not entry.get("file_sha256") or not entry.get("available_at"):
+            print(f"Error: incomplete feed release (needs file, file_sha256, available_at): {entry}", file=sys.stderr)
             return 1
-
-    try:
-        index_data = get_feed_index(base_url, feed_key, as_of=as_of, transport=transport)
-    except Exception as e:
-        print(f"Error fetching feed index: {e}", file=sys.stderr)
-        return 1
-
-    feed_as_of_str = index_data.get("as_of")
-    if not feed_as_of_str:
-        print("Error: Feed index is missing 'as_of'.", file=sys.stderr)
-        return 1
-
-    try:
-        feed_as_of_dt = datetime.fromisoformat(feed_as_of_str.replace("Z", "+00:00"))
-    except ValueError as exc:
-        print(f"Error: Invalid feed as_of timestamp '{feed_as_of_str}': {exc}", file=sys.stderr)
-        return 1
-
-    entries = index_data.get("entries", [])
-    sorted_entries = sort_feed_entries(entries)
-
-    for entry in sorted_entries:
-        file_name = entry.get("file_name") or entry.get("file")
-        file_sha256 = entry.get("file_sha256")
-        payload_sha256 = entry.get("payload_sha256")
-        available_at_str = entry.get("available_at")
-
-        if not file_name or not file_sha256 or not available_at_str:
-            print(f"Error: Invalid or incomplete feed entry (missing file/file_name, checksum, or available_at): {entry}", file=sys.stderr)
+        try:
+            available_at = _instant(entry["available_at"])
+        except ValueError as exc:
+            print(f"Error: invalid available_at for {file_name}: {exc}", file=sys.stderr)
             return 1
+        if available_at <= cutoff:
+            selected.append(entry)
 
+    if not selected:
+        print(f"Error: no feed release available up to {cutoff.isoformat()} ({len(releases)} in the manifest).", file=sys.stderr)
+        return 1
+
+    print(json.dumps({"cutoff": cutoff.isoformat(), "releases_in_manifest": len(releases), "releases_to_ingest": len(selected)}))
+    for entry in sort_feed_entries(selected):
+        file_name = entry.get("file") or entry.get("file_name")
         try:
             content = download_feed_file(base_url, feed_key, file_name, transport=transport)
         except Exception as e:
-            reason = f"download_failed: {e}"
-            print(json.dumps({"file_name": file_name, "status": "rejected", "reason": reason}))
+            print(json.dumps({"file_name": file_name, "status": "rejected", "reason": f"download_failed: {type(e).__name__}"}))
             return 1
 
         try:
             result = ingest_batch(
                 connection,
                 content,
-                as_of=feed_as_of_dt,
-                expected_sha256=file_sha256,
-                expected_payload_sha256=payload_sha256,
+                as_of=cutoff,
+                expected_sha256=entry["file_sha256"],
+                expected_payload_sha256=entry.get("payload_sha256"),
                 file_name=file_name,
             )
-
-            print(json.dumps({"file_name": file_name, "status": "success", "result": result}))
         except Exception as e:
-            reason_msg = str(e)
-            print(json.dumps({"file_name": file_name, "status": "rejected", "reason": reason_msg}))
+            print(json.dumps({"file_name": file_name, "status": "rejected", "reason": str(e)}))
             return 1
-
+        print(json.dumps({"file_name": file_name, "status": "success", "result": result}, default=str))
 
     return 0
 
