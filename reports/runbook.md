@@ -94,8 +94,9 @@ line per file and stops at the first rejected file. Evidence D1, D2.
 - A retry of a DAG run must keep its `as_of`.
 - A rejected batch will not pass on retry. Read the reason, fix the cause at the source,
   then run it again. Never edit source rows by hand.
-- The full feed takes long: the first snapshot took 71 minutes and each later batch about
-  5 minutes (section 11).
+- The full feed takes long: 38 batches took 86 minutes on 27 Aban (an orders batch 4 to
+  5.5 minutes, an outcomes batch 0.5 to 1.2 minutes); a replay of all 42 takes under a
+  minute (section 11).
 
 | `reason_code` | Meaning | Action |
 |---|---|---|
@@ -257,7 +258,8 @@ Check section 4 (precondition) before starting `deploy-prod`.
    that pipeline nothing is built or deployed except `rollback-prod`.
 3. Start `rollback-prod`. Like `deploy-prod` it checks `PROD_APPROVER` first, then the digest
    format. It deploys that digest with `migrations.enabled=false`, waits for readiness, runs
-   the live check and stores `rollback-prod.json` (K5).
+   the live check and stores `rollback-prod.json` (K5). Its `source_commit` is the commit of the
+   rollback pipeline, not the one the image was built from; the digest is what identifies it.
 
 The database schema is never rolled back: the older image runs on the newer schema, which is
 why migrations must stay additive. A rollback does not retrain and does not touch source
