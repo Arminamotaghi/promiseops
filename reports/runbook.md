@@ -207,6 +207,14 @@ change to the rules in Grafana, export them again and commit the file.
 `PromiseOpsHigh5xxRate` uses `or vector(0)` so that it reads 0, not No data, when there is
 no 5xx. This also hides a wrong label name, so after editing it check that the label exists:
 `count by (status) (promiseops_http_requests_total{job="g07-production"})`.
+The live rule in Grafana was changed first and the export on `main` follows it since !47
+(2026-11-18); after any change in Grafana, compare the two before committing.
+
+Notifications: the rules have been checked in Grafana (Alerting → Alert rules and their State
+history, evidence P5); delivery of a notification has not been tested. Before relying on it,
+check Alerting → Contact points (a contact point exists and its test message arrives) and
+Alerting → Notification policies (the team's alerts are routed to it). Until then, watch
+Alerting → Alert rules.
 
 ## 7. Delayed labels and retraining
 
@@ -224,8 +232,9 @@ Each report is one row in `monitoring_reports`, unique per `(model_version, as_o
 retried Job writes nothing new. Too few mature labels store `retraining_required = false`
 with the reason `insufficient_labels`. The API publishes the latest value as
 `promiseops_retraining_required` (0 or 1), which the platform alert `RetrainingRecommended`
-reads. `probe-database` shows the number of reports; the values are in the Job log and in
-the table:
+reads. `probe-database` shows the number of reports. The values are in the Job log and in
+the table; the manual CI job `probe-monitoring` (read-only session) prints the latest five
+rows with all columns (P3, P4). The query:
 
 ```sql
 SELECT as_of, model_version, mature_orders, late_orders, recall_at_10,
@@ -296,10 +305,11 @@ serve (K7). For an ordinary load test set `LOAD_RPS=10` and `LOAD_SECONDS=180` w
 the job.
 
 **Batch priority CronJob.** `promiseops-priority` exists in staging and production with
-`suspend: true` (`values-staging.yaml`, `values-prod.yaml`), so it has never run on the
-cluster (A4). A manual run needs
-`kubectl -n g07-staging create job --from=cronjob/promiseops-priority <name>`, which the team
-cannot do (no `kubectl` access) and no CI job does. To enable it in production: a reviewed MR
+`suspend: true` (`values-staging.yaml`, `values-prod.yaml`). A manual run in staging is the
+CI job `priority-run-staging` (`ci/priority_run.py`): it refuses any namespace that is not
+`*-staging`, starts two Jobs from the CronJob's template with the same `PRIORITY_AS_OF`,
+checks one `priority_runs` row, an identical second output and the contract shape, and
+prints no raw Job log (A4, job 3402). To enable it in production: a reviewed MR
 that sets `priorityCronJob.suspend: false` in `values-prod.yaml`, then `deploy-prod`. While
 it runs, `deploy-prod` waits (section 8).
 
