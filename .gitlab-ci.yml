@@ -355,6 +355,52 @@ probe-database:
               print("smoke order candidate:", row[0] if row else "none", "| released_at:", row[1] if row else "-")
       PY
 
+# Latest monitoring reports (runbook section 7), read only. monitoring_reports holds one
+# aggregate row per (model_version, as_of): counts, recall, drift and reasons, no order or
+# customer rows. The session is read-only, so the job cannot change anything.
+probe-monitoring:
+  needs: []
+  stage: build
+  rules:
+    - if: '$CI_COMMIT_REF_PROTECTED == "true"'
+      when: manual
+  allow_failure: true
+  script:
+    - !reference [.venv-setup, script]
+    - |
+      PROMISEOPS_DATABASE_URL="$(kubectl -n "$TEAM-staging" get secret "$RUNTIME_SECRET_NAME" -o jsonpath='{.data.PROMISEOPS_DATABASE_URL}' | base64 -d)"
+      test -n "$PROMISEOPS_DATABASE_URL"
+      export PROMISEOPS_DATABASE_URL
+    - |
+      .venv/bin/python - <<'PY'
+      import json, os, sys
+      import psycopg
+      url = os.environ["PROMISEOPS_DATABASE_URL"]
+      for prefix in ("postgresql+psycopg://", "postgresql+psycopg2://", "postgres://"):
+          if url.startswith(prefix):
+              url = "postgresql://" + url[len(prefix):]
+      try:
+          conn = psycopg.connect(url, connect_timeout=15)
+      except psycopg.Error as exc:
+          print("database is not reachable from this runner:", type(exc).__name__)
+          sys.exit(1)
+      conn.read_only = True
+      with conn:
+          conn.execute("SET LOCAL statement_timeout = '30s'")
+          conn.execute("SET LOCAL TIME ZONE 'UTC'")
+          exists = conn.execute("SELECT to_regclass('public.monitoring_reports')").fetchone()[0]
+          if exists is None:
+              print("monitoring_reports: table not found")
+              sys.exit(1)
+          cur = conn.execute(
+              "SELECT * FROM monitoring_reports ORDER BY as_of DESC, report_id DESC LIMIT 5")
+          names = [d.name for d in cur.description]
+          rows = cur.fetchall()
+          print("monitoring_reports rows shown:", len(rows))
+          for row in rows:
+              print(json.dumps(dict(zip(names, row)), default=str, ensure_ascii=False, indent=2))
+      PY
+
 # Airflow has no git-sync: it reads DAG files from ConfigMap team-dags in $TEAM-platform and
 # puts /opt/airflow/team-code (ConfigMap team-code) on sys.path. This job writes dags/*.py and
 # src/promiseops (as promiseops.zip) there; the staff README key is never touched
