@@ -304,10 +304,11 @@ serve (K7). For an ordinary load test set `LOAD_RPS=10` and `LOAD_SECONDS=180` w
 the job.
 
 **Batch priority CronJob.** `promiseops-priority` exists in staging and production with
-`suspend: true` (`values-staging.yaml`, `values-prod.yaml`), so it has never run on the
-cluster (A4). A manual run needs
-`kubectl -n g07-staging create job --from=cronjob/promiseops-priority <name>`, which the team
-cannot do (no `kubectl` access) and no CI job does. To enable it in production: a reviewed MR
+`suspend: true` (`values-staging.yaml`, `values-prod.yaml`). A manual run in staging is the
+CI job `priority-run-staging` (`ci/priority_run.py`): it refuses any namespace that is not
+`*-staging`, starts two Jobs from the CronJob's template with the same `PRIORITY_AS_OF`,
+checks one `priority_runs` row, an identical second output and the contract shape, and
+prints no raw Job log (A4, job 3402). To enable it in production: a reviewed MR
 that sets `priorityCronJob.suspend: false` in `values-prod.yaml`, then `deploy-prod`. While
 it runs, `deploy-prod` waits (section 8).
 
