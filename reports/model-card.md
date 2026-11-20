@@ -48,13 +48,14 @@ dropped.
 
 | Cohort | Orders approved in window | Orders with mature labels | Excluded: label unavailable |
 |---|---:|---:|---:|
-| train | pending | pending | pending |
-| validation | pending | pending | pending |
-| test | pending | pending | pending |
+| train | not recorded | not recorded | not recorded |
+| validation | not recorded | 20,181 | not recorded |
+| test | not evaluated | not evaluated | not evaluated |
 
-These counts remain `pending` until the first real Postgres cohort is ingested and evaluated.
-Cohorts with one class or too few mature labels are a reported failure, never fabricated
-metrics.
+The worker records N for the validation cohort only (orders with a label available by
+`label_cutoff_validation`); the other counts are not written to the release metadata or
+MLflow by v1 of the worker. Cohorts with one class or too few mature labels are a reported
+failure, never fabricated metrics.
 
 ## Features
 
@@ -108,16 +109,39 @@ candidate must still pass the champion gate below.
 
 ## Evaluation status
 
-The table is intentionally pending. It will be filled only after the first real training run;
-synthetic fixture numbers are not model-quality evidence.
+First real training run on the team database (27 Aban 1405, 2026-11-18 15:53 UTC): queued
+Job from the DAG `promiseops_training`, worker built from commit
+`ba87743cb4891508d47d26320cbd6e26377a2cb7`, cutoffs as in the split above
+(`train_end` 2017-12-31T23:59:59Z, `validation_end` 2018-03-31T23:59:59Z,
+`as_of` 2018-05-01T00:00:00Z). MLflow experiment `promiseops-g07`, run
+`ef405226c5c74b8994ba3cfed281da0e`, registered model `promiseops-late-risk` version 1.
+
+Validation cohort (same order IDs for every approach):
 
 | Approach | N | Prevalence | K | Recall@10% | Precision@10% | AP | Brier |
 |---|---:|---:|---:|---:|---:|---:|---:|
-| baseline | pending | pending | pending | pending | pending | pending | pending |
-| logistic_regression | pending | pending | pending | pending | pending | pending | pending |
-| hist_gradient_boosting | pending | pending | pending | pending | pending | pending | pending |
+| baseline | 20,181 | 0.1128 | 2,019 | 0.1015 | 0.1144 | 0.1128 | 0.1055 |
+| logistic_regression | 20,181 | 0.1128 | 2,019 | **0.2329** | **0.2625** | 0.2026 | **0.1029** |
+| hist_gradient_boosting | 20,181 | 0.1128 | 2,019 | 0.2219 | 0.2501 | **0.2040** | 0.1030 |
 
-Validation cohort hash: `pending`.
+Validation cohort hash:
+`065d2ab0840cc32cafd447ca060fcc156b4c5006ce155a8811eee73bce2a66de`.
+
+- Selected: `logistic_regression`, the highest recall@10%. Gradient boosting has a slightly
+  higher AP (0.2040 against 0.2026) but selection compares recall@10% first.
+- Reviewing the top 10% finds 23.3% of all late orders, against 10.1% for the constant
+  baseline (about 2.3 times as many); about one in four reviewed orders is late
+  (precision 0.2625 against a prevalence of 0.1128).
+- Gate: first candidate, compared with the training-prevalence baseline on the same cohort
+  hash: `accepted`, no gate failed (recall not lower, AP not lower by more than 0.02,
+  Brier not worse by more than 0.005).
+- Released: `model_version` `late-risk-logistic_regression.v1.aaf19136`, `model_sha256`
+  `aaf19136c646d3e0f44061d78e535bcd53dac991931f68ce0d7da9c19361ffbf`, pinned in
+  `release/pin.json` (!46) and deployed to production by digest on 2026-11-18 22:00 UTC.
+- Reproducibility: a second run with the same worker and cutoffs (18:41 UTC, run
+  `3c910ea0d07245a6947728d8d88fe470`, version 2) produced a model with the same
+  `model_sha256` and the same metrics.
+- The test cohort has not been evaluated.
 
 ## Monitoring
 
@@ -131,8 +155,8 @@ reference. Insufficient labels suppress automatic retraining.
 
 - The bootstrap bundle in the serving image is path-only, is not a production model and must
   never be promoted.
-- The test cohort stays untouched until final evaluation; no result in this card is a
-  production claim.
+- The test cohort stays untouched until final evaluation; the numbers above are validation
+  results, not a production claim.
 - A real run records commit, image digest, MLflow run ID, immutable model version,
   `model_sha256`, cohort/`as_of`, N, prevalence, K, cohort hash, metrics and gate decision in
   `reports/evidence.md` and MLflow.
