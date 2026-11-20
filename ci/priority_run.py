@@ -13,8 +13,11 @@ after the first has finished. Checks:
 * the output has the shape of ``contracts/priority.example.json``.
 
 An empty cohort stores nothing and is reported as a failure: choose another ``--as-of``.
-It prints the two outputs, the row counts and the Job names; never a secret or the database
-URL. The database URL is read from ``PROMISEOPS_DATABASE_URL`` only to count rows.
+It refuses any namespace that is not a staging namespace (``*-staging``) before it calls
+``kubectl``. It prints the parsed output, the row counts and the Job names. It never prints
+or stores a Job's raw log: on a failure it prints only the CLI's own one-line error
+(``Priority scoring failed: <ExceptionType>``). The database URL is read from
+``PROMISEOPS_DATABASE_URL`` only to count rows and is never printed.
 
     python ci/priority_run.py --namespace g07-staging --cronjob promiseops-priority \\
         --as-of 2018-08-01T00:00:00Z --name-prefix priority-manual-123 --out drill
@@ -25,7 +28,9 @@ from __future__ import annotations
 import argparse
 import copy
 import json
+import math
 import os
+import re
 import subprocess
 import sys
 import time
@@ -39,6 +44,20 @@ _PREFIXES = ("postgresql+psycopg://", "postgresql+psycopg2://", "postgres://")
 
 class RunError(RuntimeError):
     pass
+
+
+# The only lines of a failed Job's log that are printed: the CLI's own error lines.
+_SAFE_ERROR = re.compile(r"^Priority scoring failed: [A-Za-z_][\w.]*$")
+
+
+def require_staging(namespace: str) -> None:
+    """Refuse every target but a staging namespace, before anything is read or created."""
+    if not re.fullmatch(r"[a-z0-9-]+-staging", namespace or ""):
+        raise RunError(f"refusing namespace {namespace!r}: this job runs only in a *-staging namespace")
+
+
+def safe_failure_lines(log: str) -> list[str]:
+    return [line.strip() for line in log.splitlines() if _SAFE_ERROR.match(line.strip())]
 
 
 def kubectl(*args: str, stdin: str | None = None) -> str:
@@ -127,8 +146,13 @@ def shape_problems(output: dict, example: dict) -> list[str]:
     risks = [order.get("risk_probability") for order in orders]
     if any(not isinstance(r, (int, float)) or not 0 <= r <= 1 for r in risks):
         problems.append("a risk_probability is outside [0, 1]")
-    elif risks != sorted(risks, reverse=True):
-        problems.append("orders are not sorted by risk")
+    elif [(-o["risk_probability"], o.get("order_id")) for o in orders] != sorted(
+        (-o["risk_probability"], o.get("order_id")) for o in orders
+    ):
+        problems.append("orders are not sorted by risk descending, then order_id ascending")
+    scored = output.get("scored_count")
+    if isinstance(scored, int) and output.get("k") != math.ceil(scored / 10):
+        problems.append(f"k is {output.get('k')} but ceil(scored_count / 10) is {math.ceil(scored / 10)}")
     return problems
 
 
@@ -153,10 +177,10 @@ def run_once(kube: Kubectl, namespace: str, cronjob: dict, name: str, as_of: str
     print(f"{time.strftime('%H:%M:%S', time.gmtime())} started job {name}", flush=True)
     succeeded = wait_for(kube, namespace, name, timeout, poll)
     log = kube("-n", namespace, "logs", f"job/{name}", "--tail=-1")
-    (out / f"{name}.log").write_text(log, encoding="utf-8")
     print(f"{time.strftime('%H:%M:%S', time.gmtime())} job {name} {'complete' if succeeded else 'FAILED'}", flush=True)
     if not succeeded:
-        print(log[-3000:])
+        lines = safe_failure_lines(log)
+        print("\n".join(lines) if lines else "the job log has no known error line; it is not printed here")
         raise RunError(f"job {name} failed")
     return extract_output(log)
 
@@ -164,6 +188,7 @@ def run_once(kube: Kubectl, namespace: str, cronjob: dict, name: str, as_of: str
 def run(namespace: str, cronjob_name: str, as_of: str | None, prefix: str, out: Path,
         example: dict, kube: Kubectl, count: Callable[[], int],
         timeout: float = 960, poll: float = 5) -> int:
+    require_staging(namespace)
     out.mkdir(parents=True, exist_ok=True)
     cronjob = json.loads(kube("-n", namespace, "get", "cronjob", cronjob_name, "-o", "json"))
     print(f"cronjob {cronjob_name}: suspend={cronjob['spec'].get('suspend')}")

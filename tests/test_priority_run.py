@@ -72,7 +72,9 @@ class FakeCluster:
         if verb == "logs":
             entry = self.jobs[args[3].split("/", 1)[1]]
             if entry["failed"]:
-                return "Priority scoring failed: OperationalError\n"
+                return ("Traceback (most recent call last):\n"
+                        "  connection to postgresql://user:secret@db.internal/po failed\n"
+                        "Priority scoring failed: OperationalError\n")
             return '{"level": "info"}\n' + json.dumps(entry["result"], indent=2) + "\n"
         raise AssertionError(args)
 
@@ -131,3 +133,38 @@ def test_failed_job_stops_before_the_second_run(tmp_path):
     with pytest.raises(pr.RunError):
         run(cluster, tmp_path)
     assert "priority-manual-7-2" not in cluster.jobs
+
+
+def test_refuses_a_namespace_that_is_not_staging(tmp_path):
+    cluster = FakeCluster([output(), output()])
+    for namespace in ("g07-prod", "g07-staging-prod", "", "g07-jobs"):
+        with pytest.raises(pr.RunError, match="refusing namespace"):
+            pr.run(namespace, "promiseops-priority", "2018-08-01T00:00:00Z", "p", tmp_path,
+                   EXAMPLE, cluster.kube, lambda: cluster.rows, timeout=5, poll=0)
+    assert cluster.jobs == {}
+
+
+def test_failed_job_prints_only_the_cli_error_and_stores_no_log(tmp_path, capsys):
+    cluster = FakeCluster([], fail={"priority-manual-7-1"})
+    with pytest.raises(pr.RunError):
+        run(cluster, tmp_path)
+    printed = capsys.readouterr().out
+    assert "Priority scoring failed: OperationalError" in printed
+    assert "secret" not in printed and "postgresql://" not in printed
+    assert not list(tmp_path.glob("*.log"))
+
+
+def test_tie_break_and_k_follow_the_contract():
+    good = output(scored=12)
+    good["k"] = 2
+    good["orders"] = [
+        {"rank": 1, "order_id": "a" * 32, "risk_probability": 0.4},
+        {"rank": 2, "order_id": "b" * 32, "risk_probability": 0.4},
+    ]
+    assert pr.shape_problems(good, EXAMPLE) == []
+    swapped = json.loads(json.dumps(good))
+    swapped["orders"][0]["order_id"], swapped["orders"][1]["order_id"] = "b" * 32, "a" * 32
+    assert any("order_id ascending" in p for p in pr.shape_problems(swapped, EXAMPLE))
+    wrong_k = json.loads(json.dumps(good))
+    wrong_k["scored_count"] = 30
+    assert any("ceil" in p for p in pr.shape_problems(wrong_k, EXAMPLE))
