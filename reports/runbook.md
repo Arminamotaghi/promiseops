@@ -232,8 +232,9 @@ Each report is one row in `monitoring_reports`, unique per `(model_version, as_o
 retried Job writes nothing new. Too few mature labels store `retraining_required = false`
 with the reason `insufficient_labels`. The API publishes the latest value as
 `promiseops_retraining_required` (0 or 1), which the platform alert `RetrainingRecommended`
-reads. `probe-database` shows the number of reports; the values are in the Job log and in
-the table:
+reads. `probe-database` shows the number of reports. The values are in the Job log and in
+the table; the manual CI job `probe-monitoring` (read-only session) prints the latest five
+rows with all columns (P3, P4). The query:
 
 ```sql
 SELECT as_of, model_version, mature_orders, late_orders, recall_at_10,
