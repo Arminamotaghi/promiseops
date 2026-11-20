@@ -374,7 +374,7 @@ airflow-sync:
     - python -m py_compile dags/*.py
     - python ci/airflow_sync.py --namespace "$TEAM-platform" --commit "$CI_COMMIT_SHA"
 
-# ---------- drills (manual, main only): evidence K4, K6, K7, K8 ----------
+# ---------- drills (manual, main only): evidence K4, K6, K7, K8 and A4 ----------
 # Read-only toward the code: they exercise what is already deployed and keep their raw output
 # as artifacts for reports/evidence.md. Never run two drills on one namespace at the same time.
 .drill:
@@ -499,3 +499,25 @@ broken-readiness-staging:
       kubectl -n "$NAMESPACE" get deploy "$HELM_RELEASE" -o jsonpath='{.spec.template.spec.containers[0].env}' | grep -q nonexistent && { echo "broken setting still deployed"; exit 1; }
       cat drill/broken-readiness-poll.txt
       exit "$status"
+
+# A4: the priority CronJob is suspended and the team has no kubectl, so batch scoring never ran
+# on the cluster. This starts two Jobs from the staging CronJob's own template (same image,
+# secret and limits), one after the other, with the same --as-of: the first stores one
+# priority_runs row, the second must return the same output and store nothing
+# (ci/priority_run.py). PRIORITY_AS_OF can be changed when starting the job; if the day
+# before it has no approved order, nothing is stored and the job fails and says so.
+priority-run-staging:
+  extends: .drill
+  resource_group: staging
+  timeout: 45m
+  variables:
+    NAMESPACE: "$TEAM-staging"
+    PRIORITY_AS_OF: "2018-08-01T00:00:00Z"
+  script:
+    - !reference [.venv-setup, script]
+    - mkdir -p drill
+    - |
+      PROMISEOPS_DATABASE_URL="$(kubectl -n "$NAMESPACE" get secret "$RUNTIME_SECRET_NAME" -o jsonpath='{.data.PROMISEOPS_DATABASE_URL}' | base64 -d)"
+      test -n "$PROMISEOPS_DATABASE_URL"
+      export PROMISEOPS_DATABASE_URL
+    - .venv/bin/python ci/priority_run.py --namespace "$NAMESPACE" --cronjob "$HELM_RELEASE-priority" --as-of "$PRIORITY_AS_OF" --name-prefix "priority-manual-$CI_JOB_ID" --out drill
