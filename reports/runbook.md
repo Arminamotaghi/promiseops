@@ -207,6 +207,14 @@ change to the rules in Grafana, export them again and commit the file.
 `PromiseOpsHigh5xxRate` uses `or vector(0)` so that it reads 0, not No data, when there is
 no 5xx. This also hides a wrong label name, so after editing it check that the label exists:
 `count by (status) (promiseops_http_requests_total{job="g07-production"})`.
+The live rule in Grafana was changed first and the export on `main` follows it since !47
+(2026-11-18); after any change in Grafana, compare the two before committing.
+
+Notifications: the rules have been checked in Grafana (Alerting → Alert rules and their State
+history, evidence P5); delivery of a notification has not been tested. Before relying on it,
+check Alerting → Contact points (a contact point exists and its test message arrives) and
+Alerting → Notification policies (the team's alerts are routed to it). Until then, watch
+Alerting → Alert rules.
 
 ## 7. Delayed labels and retraining
 
